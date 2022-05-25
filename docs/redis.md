@@ -4,7 +4,7 @@
 
 ### redisObject
 
-在 Redis 中有一个名叫 redisObject 的结构体，此结构基本上可以表示所有基本的Redis数据类型，如：strings、lists、sets、sorted sets等。
+在 Redis 中存在名为 redisObject 的结构体，此结构基本上可以表示所有基本的Redis数据类型，如：strings、lists、sets、sorted sets等。
 它有一个`type`字段，这样就可以知道给定对象的类型，`encodeing`字段表示对象的储存方式，
 还有一个`refcount`，这样就可以在多个位置引用同一个对象，而无需多次分配它。
 最后，`ptr`字段指向对象的实际表示，即使对于相同的类型，也可能有所不同，具体取决于所使用的编码。

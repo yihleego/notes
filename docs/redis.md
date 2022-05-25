@@ -19,6 +19,8 @@ typedef struct redisObject {
 } robj;
 ```
 
+[redis/src/server.h#redisObject](https://github.com/redis/redis/blob/unstable/src/server.h#L848)
+
 ```c
 /* The actual Redis Object */
 #define OBJ_STRING 0    /* String object. */
@@ -27,6 +29,8 @@ typedef struct redisObject {
 #define OBJ_ZSET 3      /* Sorted set object. */
 #define OBJ_HASH 4      /* Hash object. */
 ```
+
+[redis/src/server.h#type](https://github.com/redis/redis/blob/unstable/src/server.h#L639)
 
 ```c
 /* Objects encoding. Some kind of objects like Strings and Hashes can be
@@ -45,6 +49,8 @@ typedef struct redisObject {
 #define OBJ_ENCODING_STREAM 10 /* Encoded as a radix tree of listpacks */
 #define OBJ_ENCODING_LISTPACK 11 /* Encoded as a listpack */
 ```
+
+[redis/src/server.h#encoding](https://github.com/redis/redis/blob/unstable/src/server.h#L825)
 
 ### Strings
 
@@ -76,7 +82,7 @@ _注意：在Redis 3.2 版本的之前是以`39`为界限，之后的版本是�
 #define OBJ_ENCODING_EMBSTR_SIZE_LIMIT 44
 ```
 
-[redis/src/object.c#L119](https://github.com/redis/redis/blob/450c88f368317ae9d2d3d597cf121999660e2934/src/object.c#L119)
+[redis/src/object.c#OBJ_ENCODING_EMBSTR_SIZE_LIMIT](https://github.com/redis/redis/blob/unstable/src/object.c#L113)
 
 #### 3. SDS
 

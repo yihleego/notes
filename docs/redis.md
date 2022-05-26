@@ -69,7 +69,7 @@ _另外，在未来的版本中，`zipmap`和`ziplist`将被弃用。_ [unstable
 
 Strings 是最基本的 Redis 数据类型。
 Redis 字符串是二进制安全的，这意味着 Redis 字符串可以包含任何类型的数据，例如：JPEG 图像或序列化的对象。
-字符串值的最大长度为 512MB。
+字符串值的最大长度为`512Mb`。
 
 字符串类型的数据结构存储方式有三种：`int`、`embstr`、`raw`。
 
@@ -176,20 +176,99 @@ _实际源码中直接定义了`embstr`临界值值，而非通过计算获得�
 
 ### 1. Lists 列表
 
-Redis 列表是简单的字符串列表，按插入顺序排序。可以将元素添加到 Redis 列表中，将新元素推送到列表的头部（左侧）或尾部（右侧）。
+Redis 列表是简单的字符串列表，按插入顺序排序，可以将新元素添加到列表的头部（左侧）或尾部（右侧）。
 
-在 Redis 3.2 之前的版本的列表是使用`ziplist`和`linkedlist`进行实现的，当列表元素个数比较少并且每个元素占用空间比较小的时候使用`ziplist`，
-当列表元素个数比较多或者某个元素占用空间比较大的时候使用`linkedlist`。
+在 Redis 3.2 之前的版本的列表是使用`ziplist`和`linkedlist`进行实现的。
+
+- 当列表元素个数比较少并且每个元素占用空间比较小的时候使用`ziplist`。
+- 当列表元素个数比较多或者某个元素占用空间比较大的时候使用`linkedlist`。
 
 在 Redis 3.2 之后的版本使用了`quicklist`代替了`ziplist`和`linkedlist`，原因是`linkedlist`的每节点附加空间相对太高，
-如：`prev`和`next`指针占16个字节（64位系统的指针占8个字节），且需要为每个节点单独申请内存，会导致内存碎片化，进而影响内存管理效率。
+例如每个节点的`prev`和`next`指针占`16`个字节（64位系统的指针占`8`个字节），且分别为每个节点申请内存，导致内存碎片化，进而影响内存管理效率。
 
-`quicklist`是以`ziplist`为节点的链表，将链表按段切分，每一段使用`ziplist`进行内存的连续存储，多个`ziplist`通过`prev`和`next`指针组成的双向链表。
+实际上，`quicklist`是以`ziplist`为节点的链表，将链表按段切分，每一段使用内存连续的`ziplist`进行存储，多个`ziplist`通过`prev`和`next`指针组成的双向链表。
 它结合了`ziplist`和`linkedlist`的优势，压缩了内存的使用量，进一步提高了性能。
+
+#### linkedlist 链表
+
+源码：[adlist.h](https://github.com/redis/redis/blob/7.0/src/adlist.h#L47)
+
+![linkedlist](images/redis_linkedlist.jpg)
+
+#### ziplist 压缩列表
+
+源码：[ziplist.c](https://github.com/redis/redis/blob/7.0/src/ziplist.c)
+
+![ziplist](images/redis_ziplist.jpg)
+
+#### quicklist 快速列表 
+
+源码：[quicklist.h](https://github.com/redis/redis/blob/7.0/src/quicklist.h#L105)
 
 ![quicklist](images/redis_quicklist.jpg)
 
-[quicklist.h#list](https://github.com/redis/redis/blob/7.0/src/quicklist.h#L105)
+既然`quicklist`本质上是将`ziplist`连接起来，那么每个`ziplist`存放多少的元素比较合适呢？
+
+- 太少：起不到应有的作用，若每个`ziplist`只储存`1`个元素，就退化成了`linkedlist`。
+- 太多：性能差，若当前`quicklist`只存在`1`个`ziplist`，就退化成了`ziplist`。
+
+Redis 默认配置的每个`ziplist`的大小为`8Kb`，超过这个大小时会创建一个新的`ziplist`。
+该大小可以通过修改`redis.conf`文件的`list-max-ziplist-size`配置来调整。
+
+[redis.conf#list-max-listpack-size](https://github.com/redis/redis/blob/7.0/redis.conf#L1929)
+
+```conf
+# Lists are also encoded in a special way to save a lot of space.
+# The number of entries allowed per internal list node can be specified
+# as a fixed maximum size or a maximum number of elements.
+# For a fixed maximum size, use -5 through -1, meaning:
+# -5: max size: 64 Kb  <-- not recommended for normal workloads
+# -4: max size: 32 Kb  <-- not recommended
+# -3: max size: 16 Kb  <-- probably not recommended
+# -2: max size: 8 Kb   <-- good
+# -1: max size: 4 Kb   <-- good
+# Positive numbers mean store up to _exactly_ that number of elements
+# per list node.
+# The highest performing option is usually -2 (8 Kb size) or -1 (4 Kb size),
+# but if your use case is unique, adjust the settings as necessary.
+list-max-listpack-size -2
+```
+
+为了进一步节约内存，还可以使用`LZF`压缩算法对`ziplist`进行压缩存储。
+若一个`ziplist`被压缩，那么从中读取数据前需要先解压，因此性能会有所下降。
+
+- 压缩深度为`0`时，不会对任何节点进行压缩。
+- 压缩深度为`1`时，`quicklist`的`head`和`tail`节点不会被压缩，这样可以有效地提高`push`和`pop`操作的性能。
+- 压缩深度为`2`时，`quicklist`的首尾各`2`个节点（共`4`个）不会被压缩。
+- 压缩深度为`3`时，`quicklist`的首尾各`3`个节点（共`6`个）不会被压缩。
+- 以此类推。
+
+压缩深度可以通过修改`redis.conf`文件的`list-compress-depth`配置来调整。
+默认值为`0`，即不启用压缩功能。
+
+[redis.conf#list-compress-depth](https://github.com/redis/redis/blob/7.0/redis.conf#L1945)
+
+```conf
+# Lists may also be compressed.
+# Compress depth is the number of quicklist ziplist nodes from *each* side of
+# the list to *exclude* from compression.  The head and tail of the list
+# are always uncompressed for fast push/pop operations.  Settings are:
+# 0: disable all list compression
+# 1: depth 1 means "don't start compressing until after 1 node into the list,
+#    going from either the head or tail"
+#    So: [head]->node->node->...->node->[tail]
+#    [head], [tail] will always be uncompressed; inner nodes will compress.
+# 2: [head]->[next]->node->node->...->node->[prev]->[tail]
+#    2 here means: don't compress head or head->next or tail->prev or tail,
+#    but compress all nodes between them.
+# 3: [head]->[next]->[next]->node->node->...->node->[prev]->[prev]->[tail]
+# etc.
+list-compress-depth 0
+```
+
+#### LZF 压缩算法
+
+_TODO_
 
 ### 2. Set 集合
 

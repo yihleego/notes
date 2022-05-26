@@ -26,7 +26,7 @@ typedef struct redisObject {
 } robj;
 ```
 
-[server.h#object](https://github.com/redis/redis/blob/7.0/src/server.h#L637)
+[server.h#object](https://github.com/redis/redis/blob/7.0/src/server.h#L638)
 
 ```c
 /* The actual Redis Object */
@@ -37,7 +37,7 @@ typedef struct redisObject {
 #define OBJ_HASH 4      /* Hash object. */
 ```
 
-[server.h#encoding](https://github.com/redis/redis/blob/7.0/src/server.h#L822)
+[server.h#encoding](https://github.com/redis/redis/blob/7.0/src/server.h#L825)
 
 ```c
 /* Objects encoding. Some kind of objects like Strings and Hashes can be
@@ -73,18 +73,17 @@ Redis 字符串是二进制安全的，这意味着 Redis 字符串可以包含�
 
 字符串类型的数据结构存储方式有三种：`int`、`embstr`、`raw`。
 
-- `int`: 
-若存储数据的类型是整数，例如`123`这样的数据，就会使用`int`的存储方式进行存储，此时 redisObject 的`type`的值为`OBJ_STRING`，
-`encoding`的值为`OBJ_ENCODING_INT`。数据修改后类型不再是整数或者长度超过2^63-1时，会将`int`编码修改为`raw`编码。
+- `int`:
+  若存储数据的类型是整数，例如`123`这样的数据，就会使用`int`的存储方式进行存储，此时 redisObject 的`type`的值为`OBJ_STRING`，
+  `encoding`的值为`OBJ_ENCODING_INT`。数据修改后类型不再是整数或者长度超过2^63-1时，会将`int`编码修改为`raw`编码。
 
-- `embstr`: 
-若存储数据的类型是字符串，且长度小于等于`44`个字节，就会使用`embstr`的存储方式进行存储，此时 redisObject 的`type`的值为`OBJ_STRING`，
-`encoding`的值为`OBJ_ENCODING_EMBSTR`。
+- `embstr`:
+  若存储数据的类型是字符串，且长度小于等于`44`个字节，就会使用`embstr`的存储方式进行存储，此时 redisObject 的`type`的值为`OBJ_STRING`，
+  `encoding`的值为`OBJ_ENCODING_EMBSTR`。
 
-- `raw`: 
-若存储数据的类型是字符串，且长度大于`44`个字节，就会使用`raw`的存储方式进行存储，此时 redisObject 的`type`的值为`OBJ_STRING`，
-`encoding`的值为`OBJ_ENCODING_RAW`。
-
+- `raw`:
+  若存储数据的类型是字符串，且长度大于`44`个字节，就会使用`raw`的存储方式进行存储，此时 redisObject 的`type`的值为`OBJ_STRING`，
+  `encoding`的值为`OBJ_ENCODING_RAW`。
 
 #### SDS (Simple Dynamic Strings) 简单动态字符串
 
@@ -161,6 +160,8 @@ struct sdshdr8 {
 
 _实际源码中直接定义了`embstr`临界值值，而非通过计算获得。_
 
+[object.c#OBJ_ENCODING_EMBSTR_SIZE_LIMIT](https://github.com/redis/redis/blob/7.0/src/object.c#L119)
+
 ```c
 /* Create a string object with EMBSTR encoding if it is smaller than
  * OBJ_ENCODING_EMBSTR_SIZE_LIMIT, otherwise the RAW encoding is
@@ -171,11 +172,24 @@ _实际源码中直接定义了`embstr`临界值值，而非通过计算获得�
 #define OBJ_ENCODING_EMBSTR_SIZE_LIMIT 44
 ```
 
-[object.c#OBJ_ENCODING_EMBSTR_SIZE_LIMIT](https://github.com/redis/redis/blob/7.0/src/object.c#L113)
-
 总结：在 Redis 3.2 版本的之前是以`39`为界限，之后的版本是以`44`为界限。
 
 ### 1. Lists 列表
+
+Redis 列表是简单的字符串列表，按插入顺序排序。可以将元素添加到 Redis 列表中，将新元素推送到列表的头部（左侧）或尾部（右侧）。
+
+在 Redis 3.2 之前的版本的列表是使用`ziplist`和`linkedlist`进行实现的，当列表元素个数比较少并且每个元素占用空间比较小的时候使用`ziplist`，
+当列表元素个数比较多或者某个元素占用空间比较大的时候使用`linkedlist`。
+
+在 Redis 3.2 之后的版本使用了`quicklist`代替了`ziplist`和`linkedlist`，原因是`linkedlist`的每节点附加空间相对太高，
+如：`prev`和`next`指针占16个字节（64位系统的指针占8个字节），且需要为每个节点单独申请内存，会导致内存碎片化，进而影响内存管理效率。
+
+`quicklist`是以`ziplist`为节点的链表，将链表按段切分，每一段使用`ziplist`进行内存的连续存储，多个`ziplist`通过`prev`和`next`指针组成的双向链表。
+它结合了`ziplist`和`linkedlist`的优势，压缩了内存的使用量，进一步提高了性能。
+
+![quicklist](images/redis_quicklist.jpg)
+
+[quicklist.h#list](https://github.com/redis/redis/blob/7.0/src/quicklist.h#L105)
 
 ### 2. Set 集合
 

@@ -157,19 +157,53 @@ static final int hash(Object key) {
 
 _在并发场景中，应该使用线程安全的`ConcurrentHashMap`_
 
-#### 红黑树
+### LinkedHashMap
 
-TODO
+`LinkedHashMap`是`HashMap`的一个子类，由于其内部维护了一个双向链表，因此可以按插入顺序遍历元素。
+此外，`LinkedHashMap`可以很好的支持`LRU (Least Recently Used)`算法，调用构造方法时将`accessOrder`设置为`true`，即可按照访问次序排序。
 
 ### TreeMap
 
+`TreeMap`实现了`SortedMap`接口。由于其是基于红黑树实现的，因此`key`必须实现`Comparable`接口或在调用构造方法时指定`Comparator`，
+否则会在运行时抛出`java.lang.ClassCastException`异常。
+
+#### Red–black tree 红黑树
+
+红黑树是每个节点都带有颜色属性的二叉查找树，颜色为红色或黑色。在二叉查找树强制一般要求以外，对于任何有效的红黑树我们增加了如下的额外要求：
+
+- 根是黑色。
+- 节点是红色或黑色。
+- 所有叶子都是黑色（叶子是NIL节点）。
+- 每个红色节点必须有两个黑色的子节点。（或者说从每个叶子到根的所有路径上不能有两个连续的红色节点；或者说不存在两个相邻的红色节点，相邻指两个节点是父子关系；或者说红色节点的父节点和子节点均是黑色的。）
+- 从任一节点到其每个叶子的所有简单路径都包含相同数目的黑色节点。
+
+![redblacktree](images/java_treemap_redblacktree.png)
+
+#### 对比 AVL tree (Adelson-Velsky and Landis Tree)
+
+`Red–black tree`和`AVL tree`都是平衡二叉查找树，区别如下：
+
+- 插入：`Red–black tree`和`AVL tree`都是最多两次树旋转来实现复衡，旋转的时间复杂度均是`O(1)`。
+- 删除：`Red–black tree`最多只需要旋转3次实现复衡，时间复杂度是`O(1)`。`AVL tree`需要维护从根节点到被删除节点路径上所有节点的平衡，旋转的时间复杂度是`O(logN)`。
+- 搜索：`Red–black tree`不是"完全平衡"的平衡二叉查找树，而`AVL tree`是高度平衡的，因此`AVL tree`的搜索效率更高。
+
+总结：`Red–black tree`相对于`AVL tree`来说，牺牲了部分平衡性以换取插入/删除操作时少量的旋转操作，整体来说性能要优于`AVL tree`。
+
+#### 对比 B-tree / B+tree
+
+`B-tree`和`B+tree`都是平衡多路查找树，与平衡二叉查找树不同，`B-tree`和`B+tree`适用于读写相对大的数据块的存储系统，例如磁盘。
+
+`B-tree`和`B+tree`高度都不高，尤其是`B+tree`非叶子结点不存储数据，所以看上去会更加“矮胖”。
+如果用`B-tree`和`B+tree`在数据量不多的场景下，数据都会“挤在”一个结点中，遍历效率就退化成了链表。
+
+总结：`Red–black tree`多用于内存中排序，`B-tree`和`B+tree`主要用于数据存储在磁盘上的场景。
+
+### ~~HashTable~~
+
+`HashTable`是遗留类，与`HashMap`类似，不同的是它承自`Dictionary`类，由于其均方法使用`synchronized`修饰，因此是线程安全的，但并发性远不如`ConcurrentHashMap`
+，不建议使用。
+
 ## Locks 锁
-
-### synchronized
-
-### Lock
-
-### ReadWriteLock
 
 ## J.U.C
 

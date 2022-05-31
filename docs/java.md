@@ -215,7 +215,12 @@ Java中有两种加锁的方式：一种是用`synchronized`关键字，另一�
 | 是否是公平锁 | 非公平锁         | 根据实现类，例如`ReentrantLock`和`ReentrantReadWriteLock`可通过构造方法指定公平或非公平 |
 | 是否可释放锁 | 不可释放         | 可释放，有`void unlock();`方法                                         |
 
-`synchronized`修饰在方法上或作用在代码块且未指定对象时，锁当前对象。
+### synchronized使用方法
+
+- 修饰在非静态方法上时，锁当前对象。
+- 修饰在静态方法上时，锁当前类。
+- 作用在代码块并指定对象时，锁指定对象。
+- 作用在代码块并指定类时，锁指定类。
 
 ### synchronized 锁膨胀
 
@@ -306,6 +311,54 @@ Java中有两种加锁的方式：一种是用`synchronized`关键字，另一�
 乐观锁适用于写比较少的情况下，即冲突真的很少发生的时候，这样可以省去锁的开销，加大了系统的整个吞吐量。
 若经常产生冲突，不断的进行重试造成性能浪费，这种情况下用悲观锁就比较合适。
 
+### 双重检查锁 Double-Check Locking
+
+双重校验锁经常用于创建单例场景：
+
+```java
+public class Singleton {
+    private static volatile Singleton instance;
+
+    private Singleton() {
+    }
+
+    public static Singleton getInstance() {
+        if (instance == null) {
+            if (instance == null) {
+                synchronized (Singleton.class) {
+                    instance = new Singleton();
+                }
+            }
+        }
+        return instance;
+    }
+}
+```
+
+单例变量必须使用`volatile`修饰，保证可见性，防止指令重排序，避免其他线程拿到没完成初始化的对象。
+
+另外，在 Java 中使用单例最好使用静态内部类：
+
+```java
+public class Singleton {
+    private static class Inner {
+        private static final Singleton instance = new Singleton();
+    }
+
+    public static Singleton getInstance() {
+        return Inner.instance;
+    }
+}
+```
+
+当一个类被加载时，其内部类不会被同时加载，当且仅当其某个静态成员（静态域、构造器、静态方法等）被调用时发生。
+也就是说只有在调用`Singleton.getInstance()`的时候`Singleton.Inner.class`才会被加载。
+
+虚拟机会保证一个类的初始化方法在多线程环境中被正确的加锁同步，如果多个线程同时去初始化同一个类，那么只会有一个线程去执行这个类的初始化方法，其他线程都需要阻塞等待，直到活动线程执行初始化方法完毕。
+如果在一个类的初始化方法中有耗时很长的操作，就有可能造成多个线程阻塞（在实际应用中这种阻塞往往是很隐蔽的），这就是他线程安全的原因。
+
+需要注意的是，其他线程虽然会被阻塞，但如果执行初始化方法的那条线程退出初始化方法后，其他线程唤醒之后不会再次进入初始化方法，因为同一个类加载器下，一个类只会被初始化一次。
+
 ## J.U.C
 
 ### AbstractQueuedSynchronizer
@@ -326,6 +379,16 @@ Java中有两种加锁的方式：一种是用`synchronized`关键字，另一�
 
 ## Threads 线程
 
+### Thread
+
+### Runnable
+
+### Callable
+
+### 线程池
+
+### TreadLocal
+
 ## ClassLoader
 
 ## JVM
@@ -342,7 +405,82 @@ CGLIB
 
 ## Java 版本变化
 
-### Java 9
+### Java 1.0 Oak 1996-01-23
+
+- 诞生
+
+### Java 1.1 Sparkler 1997-02-19
+
+- 新增JDBC
+- 支持反射
+- 支持内部类
+- 支持远程方法调用
+
+### Java 1.2 Playground 1998-12-08
+
+- 新增集合框架
+- 支持JIT
+- 对字符串常量做内存映射
+
+### Java 1.3 Kestrel 2000-05-08
+
+- Hotspot 作为默认虚拟机
+- 新增代理类
+
+### Java 1.4 Merlin 2004-02-06
+
+- 支持XML的基本处理
+- 支持断言
+- 支持正则表达式
+- 支持链式异常处理
+- 支持IPV6
+- 新增 Logging API
+- 新增 Preferences API
+- 新增 Image I/O API
+- 新增 NIO API
+- 增强 JDBC 3.0 API
+
+### Java 5 Tiger 2004-09-30
+
+- 支持泛型
+- 新增枚举
+- 自动装箱拆箱
+- 支持可变参数
+- 新增 annotation 和 instrument
+- 支持 foreach 循环
+- 支持静态导入
+- 并发数据结构 (JUC)
+- 新增 Arrays 和 StringBuilder
+
+### Java 6 Mustang 2006-12-11
+
+- 优化 String.intern()
+- 优化 synchronized 引入了偏向锁和轻量级锁
+
+### Java 7 Dolphin 2011-07-28
+
+- switch 支持 String 类型
+- 数字字面量的改进支持下划线
+- 增强异常处理 try-with-resources
+- 增强泛型推断
+- JSR 203 More New I/O APIs for the JavaTMPlatform ("NIO.2")
+- JSR 292 提供了 invokedynamic 字节码的 API 支持。
+- 新增 Fork/Join framework
+
+### Java 8 Spider 2014-03-18
+
+- 支持 Lambda 表达式
+- 支持方法引用
+- 增强 annotation 新增 @Repeatable
+- 新增 Optional 类
+- 新增 Stream 类
+- 新增 Base64 类
+- JSR 310 Date/Time API 新增 java.time 包
+- JavaScript引擎Nashorn
+- 优化 HashMap 的 hash 方法并引入红黑树
+- JEP 122 JVM使用 Metaspace 代替 PermGen 空间。
+
+### Java 9 2017-09-22
 
 - 模块系统：模块是一个包的容器，Java 9 最大的变化之一是引入了模块系统（Jigsaw 项目）。
 - REPL (JShell)：交互式编程环境。
@@ -361,3 +499,48 @@ CGLIB
 - 改进的 CompletableFuture API ： CompletableFuture 类的异步机制可以在 ProcessHandle.onExit 方法退出时执行操作。
 - 轻量级的 JSON API：内置了一个轻量级的JSON API
 - 响应式流（Reactive Streams) API: Java 9中引入了新的响应式流 API 来支持 Java 9 中的响应式编程。
+- 将G1设为默认的垃圾回收器实现
+
+### Java 10 2018-03-21
+
+- 局部变量的类型推断 var 关键字
+- GC改进和内存管理 并行全垃圾回收器 G1
+- 垃圾回收器接口
+- 线程-局部变量管控
+- 合并 JDK 多个代码仓库到一个单独的储存库中
+- 新增API：ByteArrayOutputStream
+- 新增API：List、Map、Set
+- 新增API：java.util.Properties
+- 新增API：Collectors收集器
+
+### Java 11 2018-09-25
+
+- 增强局部变量的类型推断
+- 增强字符串
+- 增强集合
+- 增强Stream
+- 增强Optional
+- 增强InputStream
+- 新增HTTP Client API
+
+### Java 12 2019-03-19
+
+- 增强字符串
+- 支持Unicode 11
+- JEP 354 Switch 表达式 (Preview)
+
+### Java 13 2019-09-17
+
+- JEP 350 Dynamic CDS Archives
+- JEP 351 ZGC Uncommit Unused Memory
+- JEP 353 重新实现 Socket API
+- JEP 354 Switch 表达式 (Preview)
+- JEP 355 文本块 (Preview)
+
+### Java 14
+
+### Java 15
+
+### Java 16
+
+### Java 17

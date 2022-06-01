@@ -364,13 +364,17 @@ public class Singleton {
 
 ### AbstractQueuedSynchronizer
 
-`AbstractQueuedSynchronizer`（简称AQS）定义了一套多线程访问共享资源的同步模板，它是实现同步器的基础组件，如常用的`ReentrantLock`、`Semaphore`、`CountDownLatch`等。
+`AbstractQueuedSynchronizer`（简称`AQS`）定义了一套多线程访问共享资源的同步模板，是实现同步器的基础组件，例如`ReentrantLock`、`Semaphore`、`CountDownLatch`等均是基于`AQS`实现的。
+
+![java_aqs_process](images/java_aqs_process.jpg)
 
 #### 主要属性
 
 - `volatile int state`同步状态
 - `volatile Node head`和`volatile Node tail`组成`CLH`队列
 - `class ConditionObject`条件变量，包含`Node`组成的条件单向队列
+
+![java_aqs_properties](images/java_aqs_properties.jpg)
 
 #### 主要方法
 
@@ -398,21 +402,15 @@ _获取独占、共享资源操作还提供超时与响应中断的扩展函数�
 - `Semaphore`的`state`用来表示可用信号的个数。
 - `CountDownLatch`的`state`用来表示计数器的值。
 
+#### Node 节点
+
+`Node`是`AQS`的内部类，每个等待资源的线程都会封装成`Node`节点组成`CLH`队列并阻塞线程,
+头部节点（哨兵节点）线程释放资源时会把唤醒下一个节点的线程去获取资源。
+
 #### CLH 队列
 
 `AQS`通过`CLH`（Craig, Landin, and Hagersten）队列管理竞争资源的线程，`CLH`是一个`FIFO`的双端双向队列，
 当一个线程竞争资源失败，就会将等待资源的线程封装成一个`Node`节点，通过`CAS`操作插入`CLH`队列尾部。
-
-`CLH`队列具有如下几个优点：
-
-- 先进先出保证了公平性
-- 非阻塞的队列，通过自旋锁和C A S保证节点插入和移除的原子性，实现无锁快速插入
-- 采用了自旋锁思想，所以CLH也是一种基于链表的可扩展、高性能、公平的自旋锁
-
-#### Node 节点
-
-`Node`是`AQS`的内部类，每个等待资源的线程都会封装成`Node`节点组成`CLH`队列并阻塞线程,
-头部节点（哨兵节点）线程释放资源时会把唤醒下一个线程去获取资源。
 
 #### ConditionObject 条件变量
 
@@ -422,7 +420,7 @@ _获取独占、共享资源操作还提供超时与响应中断的扩展函数�
 ### ReentrantLock
 
 `ReentrantLock`基于`AQS`实现的可重入锁，支持公平锁和非公平锁，默认使用非公平锁。
-当多个线程尝试获取同一个锁，其中一个线程获取到锁后，其他线程会被挂起排队等待锁释放，当获该线程（即哨兵节点）释放锁后，会唤醒线程队列的头部节点（即哨兵节点的下一个节点）。
+当多个线程尝试获取同一个锁，其中一个线程获取到锁后，其他线程会被挂起排队等待锁释放，当获该线程（即哨兵节点）释放锁后，会唤醒线程队列中的下一个节点的线程（即哨兵节点的下一个节点）。
 
 #### 非公平锁
 

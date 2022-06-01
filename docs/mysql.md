@@ -127,12 +127,12 @@ select * from test where v = 8 for update;
 所以我们可以预测在新的事务`T2`中分别执行以下`SQL`的结果：
 
 ```mysql
-insert into test(v) values(1);  // 区间外 预测：non-blocking 实际：non-blocking 符合预期
-insert into test(v) values(4);  // 区间外 预测：non-blocking 实际：non-blocking 符合预期
-insert into test(v) values(5);  // 区间外 预测：non-blocking 实际：blocking     不符合预期
-insert into test(v) values(9);  // 区间内 预测：blocking     实际：blocking     符合预期
-insert into test(v) values(11); // 区间内 预测：blocking     实际：non-blocking 不符合预期
-insert into test(v) values(12); // 区间外 预测：non-blocking 实际：non-blocking 符合预期
+insert into test(v) values(1);  # 区间外 预测：non-blocking 实际：non-blocking 符合预期
+insert into test(v) values(4);  # 区间外 预测：non-blocking 实际：non-blocking 符合预期
+insert into test(v) values(5);  # 区间外 预测：non-blocking 实际：blocking     不符合预期
+insert into test(v) values(9);  # 区间内 预测：blocking     实际：blocking     符合预期
+insert into test(v) values(11); # 区间内 预测：blocking     实际：non-blocking 不符合预期
+insert into test(v) values(12); # 区间外 预测：non-blocking 实际：non-blocking 符合预期
 ```
 
 根据临键锁的区间，我们预测在`T2`事务中分别插入值为`9`和`11`的数据会被`T1`事务阻塞。 但是实际上在插入值为`5`和`9`时才会被阻塞，结果并不符合预期，似乎违背了临键锁的设计，这就要从索引结构（B+tree）说起了。

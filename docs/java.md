@@ -364,13 +364,179 @@ public class Singleton {
 
 ### AbstractQueuedSynchronizer
 
-### CountDownLatch
+`AbstractQueuedSynchronizer`（简称AQS）定义了一套多线程访问共享资源的同步模板，它是实现同步器的基础组件，如常用的`ReentrantLock`、`Semaphore`、`CountDownLatch`等。
+
+#### 主要属性
+
+- `volatile int state`同步状态
+- `volatile Node head`和`volatile Node tail`组成`CLH`队列
+- `class ConditionObject`条件变量，包含`Node`组成的条件单向队列
+
+#### 主要方法
+
+- `int getState()`返回同步状态
+- `void setState(int newState)`设置同步状态
+- `boolean compareAndSetState(int expect, int update)`通过`CAS`设置同步状态
+- `boolean isHeldExclusively()`当前线程是否持有资源（需要子类实现）
+- `void acquire(int arg)`独占式获取资源模板
+- `boolean release(int arg)`独占式释放资源模板
+- `boolean tryAcquire(int arg)`独占式获取资源（需要子类实现）
+- `boolean tryRelease(int arg)`独占式释放资源（需要子类实现）
+- `void acquireShared(int arg)`共享式获取资源模板
+- `boolean releaseShared(int arg)`共享式释放资源模板
+- `int tryAcquireShared(int arg)`共享式获取资源，返回值大于等于0则表示获取成功（需要子类实现）
+- `boolean tryReleaseShared(int arg)`共享式释放资源（需要子类实现）
+
+_获取独占、共享资源操作还提供超时与响应中断的扩展函数。_
+
+#### state 同步状态
+
+对于`AQS`来说，线程同步的关键是对`state`的操作，可以说获取、释放资源是否成功都是由state决定的，例如：
+
+- `ReentrantLock`的`state`值为`0`表示无锁，大于`0`表示有锁，每次重入时`state`会加`1`。
+- `ReentrantReadWriteLock`的`state`高`16`位代表读锁状态，低`16`位代表写锁状态。
+- `Semaphore`的`state`用来表示可用信号的个数。
+- `CountDownLatch`的`state`用来表示计数器的值。
+
+#### CLH 队列
+
+`AQS`通过`CLH`（Craig, Landin, and Hagersten）队列管理竞争资源的线程，`CLH`是一个`FIFO`的双端双向队列，
+当一个线程竞争资源失败，就会将等待资源的线程封装成一个`Node`节点，通过`CAS`操作插入`CLH`队列尾部。
+
+`CLH`队列具有如下几个优点：
+
+- 先进先出保证了公平性
+- 非阻塞的队列，通过自旋锁和C A S保证节点插入和移除的原子性，实现无锁快速插入
+- 采用了自旋锁思想，所以CLH也是一种基于链表的可扩展、高性能、公平的自旋锁
+
+#### Node 节点
+
+`Node`是`AQS`的内部类，每个等待资源的线程都会封装成`Node`节点组成`CLH`队列并阻塞线程,
+头部节点（哨兵节点）线程释放资源时会把唤醒下一个线程去获取资源。
+
+#### ConditionObject 条件变量
+
+`Object`的`wait()`和`notify()`方法是配合`synchronized`锁实现线程间同步协作的功能，`ConditionObject`条件变量也提供这样的功能，通过`await()`和`signal()`方法实现。
+不同于的是，一个`AQS`可以对应多个条件变量，而`synchronized`锁只能一个。
 
 ### ReentrantLock
 
+`ReentrantLock`基于`AQS`实现的可重入锁，支持公平锁和非公平锁，默认使用非公平锁。
+当多个线程尝试获取同一个锁，其中一个线程获取到锁后，其他线程会被挂起排队等待锁释放，当获该线程（即哨兵节点）释放锁后，会唤醒线程队列的头部节点（即哨兵节点的下一个节点）。
+
+#### 非公平锁
+
+从`ReentrantLock`的`NonfairSync`源码中我们可以看出非公平锁`2`次分别尝试调用`compareAndSetState`获取锁而未考虑线程队列，如果`2`次尝试均未获得锁，则加入线程队列中。
+
+```java
+static final class NonfairSync extends Sync {
+    private static final long serialVersionUID = 7316153563782823691L;
+
+    final void lock() {
+        // 1. 直接尝试获取锁
+        if (compareAndSetState(0, 1))
+            setExclusiveOwnerThread(Thread.currentThread());
+        else
+            acquire(1);
+    }
+
+    protected final boolean tryAcquire(int acquires) {
+        return nonfairTryAcquire(acquires);
+    }
+}
+
+abstract static class Sync extends AbstractQueuedSynchronizer {
+    private static final long serialVersionUID = -5179523762034025860L;
+
+    abstract void lock();
+
+    final boolean nonfairTryAcquire(int acquires) {
+        final Thread current = Thread.currentThread();
+        int c = getState();
+        if (c == 0) {
+            // 2. 如果当无锁，尝试获取锁
+            if (compareAndSetState(0, acquires)) {
+                setExclusiveOwnerThread(current);
+                return true;
+            }
+        }
+        else if (current == getExclusiveOwnerThread()) {
+            int nextc = c + acquires;
+            if (nextc < 0) // overflow
+                throw new Error("Maximum lock count exceeded");
+            setState(nextc);
+            return true;
+        }
+        return false;
+    }
+}
+```
+
+#### 公平锁
+
+从`ReentrantLock`的`FairSync`源码中我们可以看出公平锁在获取锁前，调用了`hasQueuedPredecessors()`判断线程需不需要排队，若需要排队或未获得锁，则加入线程队列中。
+
+```java
+static final class FairSync extends Sync {
+    private static final long serialVersionUID = -3000897897090466540L;
+
+    final void lock() {
+        acquire(1);
+    }
+
+    protected final boolean tryAcquire(int acquires) {
+        final Thread current = Thread.currentThread();
+        int c = getState();
+        if (c == 0) {
+            // 判断线程是否需要排队
+            if (!hasQueuedPredecessors() &&
+                compareAndSetState(0, acquires)) {
+                setExclusiveOwnerThread(current);
+                return true;
+            }
+        }
+        else if (current == getExclusiveOwnerThread()) {
+            int nextc = c + acquires;
+            if (nextc < 0)
+                throw new Error("Maximum lock count exceeded");
+            setState(nextc);
+            return true;
+        }
+        return false;
+    }
+}
+```
+
 ### ReentrantReadWriteLock
 
+_TODO_
+
+### Semaphore
+
+`Semaphore`是基于`AQS`实现的信号量，可用来控制同时访问特定资源的线程数量，以此来达到协调线程工作，支持公平锁和非公平锁，默认使用非公平锁。
+
+其内部维护了一个虚拟的资源池，如果许可数量为`0`则阻塞线程，直到许可数量大于`0`时会唤醒线程队列的头部节点（即哨兵节点的下一个节点）。
+
+### CountDownLatch
+
+`CountDownLatch`是基于`AQS`实现的同步计数器，实例化时需要传入一个不小于`0`的整数值。
+
+调用`await()`阻塞当前线程，将当前线程加入阻塞队列，或者调用`await(long timeout, TimeUnit unit)`在指定时间内阻塞当前线程，超时后唤醒当前线程。
+调用`countDown()`对计数器进行减`1`操作，当计数器递减至`0`时，唤醒阻塞队列里的所有线程。
+
 ### Atomic*
+
+支持原子操作的类
+
+- AtomicBoolean
+- AtomicInteger
+- AtomicIntegerArray
+- AtomicLong
+- AtomicLongArray
+- AtomicReference
+- AtomicReferenceArray
+- DoubleAdder
+- LongAdder
 
 ### ConcurrentHashMap
 
@@ -390,9 +556,19 @@ public class Singleton {
 
 ### TreadLocal
 
+### sleep wait
+
 ## ClassLoader
 
 ## JVM
+
+## GC
+
+### CMS
+
+### G1
+
+### ZGC
 
 ## 动态代理
 

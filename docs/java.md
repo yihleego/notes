@@ -215,7 +215,7 @@ Java中有两种加锁的方式：一种是用`synchronized`关键字，另一�
 | 是否是公平锁 | 非公平锁         | 根据实现类，例如`ReentrantLock`和`ReentrantReadWriteLock`可通过构造方法指定公平或非公平 |
 | 是否可释放锁 | 不可释放         | 可释放，有`void unlock();`方法                                         |
 
-### synchronized使用方法
+### synchronized 使用方法
 
 - 修饰在非静态方法上时，锁当前对象。
 - 修饰在静态方法上时，锁当前类。
@@ -259,6 +259,8 @@ Java中有两种加锁的方式：一种是用`synchronized`关键字，另一�
 偏向锁的目的是假定`monitor`一直由某个特定线程持有，直到另一个线程尝试获取它，这样就可以避免获取`monitor`时执行`CAS`的原子操作。
 `monitor`首次锁定时偏向该线程，这样就可以避免同一对象的后续同步操作步骤需要原子指令。
 
+![java_synchronized_biased_locking](images/java_synchronized_biased_locking.png)
+
 从历史上看，偏向锁使得 JVM 的性能得到了显著改善。
 
 然而`Java 15`版本废弃了偏向锁：[JEP 374: Disable and Deprecate Biased Locking](https://openjdk.java.net/jeps/374)
@@ -288,11 +290,58 @@ Java中有两种加锁的方式：一种是用`synchronized`关键字，另一�
 2. 如果替换成功，整个同步过程就完成了。
 3. 如果替换失败，说明有其他线程尝试过获取该锁（此时锁已膨胀，Mark Word存的是指向重量级锁的指针），那就要在释放锁的同时，唤醒被挂起的线程。
 
-轻量级锁对少量线程竞争同一个资源并且他们的操作时间比较短的场景性能较好，不会阻塞线程，没有竞争到锁的线程会轮询固定的次数来获取轻量级锁。
+轻量级锁对少量线程竞争同一个资源并且他们的操作时间比较短的场景性能较好，没有竞争到锁的线程会轮询固定的次数来获取轻量级锁，不会阻塞线程。
+因为阻塞线程需要`CPU`从用户态转到内核态，其代价较大。
+
+![java_synchronized_lightweight_locking](images/java_synchronized_lightweight_locking.png)
 
 #### 4. 重量级锁
 
 当一个轻量级锁自旋超过一定次数（默认10次），或被两个及以上的线程竞争的时候，轻量级锁就会膨胀为重量级锁。
+
+![java_synchronized_heavyweight_locking](images/java_synchronized_heavyweight_locking.png)
+
+### synchronized 锁粗化
+
+将多个连续的加锁、解锁操作连接在一起，扩展成一个范围更大的锁，避免频繁的加锁解锁操作。
+
+例如在循环中使用`synchronized`：
+
+```java
+for (int i = 0; i < 1000; i++) {
+    synchronized (this) {
+        i++;
+    }
+}
+```
+
+优化后将锁的粒度粗化（近似代码）：
+
+```java
+synchronized (this) {
+    for (int i = 0; i < 1000; i++) {
+        i++;
+    }
+}
+```
+
+### synchronized 锁消除
+
+虚拟机在`JIT`编译时，通过对运行上下文的扫描，经过逃逸分析，去除不可能存在共享资源竞争的锁，通过这种方式消除没有必要的锁，可以节省毫无意义的时间消耗。
+
+例如被加锁的对象只有当前代码中使用：
+
+```java
+synchronized (new Object()) {
+    run();
+}
+```
+
+优化后将锁消除：
+
+```java
+run();
+```
 
 ### CAS (Compare-and-Swap)
 
@@ -559,6 +608,8 @@ _TODO_
 ## ClassLoader
 
 ## JVM
+
+### 逃逸分析
 
 ## GC
 

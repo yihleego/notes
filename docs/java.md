@@ -57,16 +57,16 @@
 
 ### HashMap
 
-- 无序，不允许`Key`重复
-- `Key`对象需要实现`hashCode()`方法和`equals()`方法
-- 允许`null`值
+- 无序，不允许`key`重复
+- `key`对象需要实现`hashCode()`方法和`equals()`方法
+- 允许`key`和`value`为`null`值
 - `Java 8`版本后引入了红黑树，优化了扩容方法
 - 哈希表`table`会在第一次使用时初始化，并根据需要进行扩容，且长度始终是`2`的幂
 - 哈希表`table`的链表长度超过`8`时，会将链表转换成红黑树
 - 扩容阈值`threshold`，当元素数量大于阈值时会触发扩容，值为`capacity * loadFactor`
 - 负载因子`loadFactor`，它与`threshold`结合起作用，默认值是`0.75`
 
-#### `put()`方法
+#### `put(K key, V value)`方法
 
 ```java
 public V put(K key, V value) {
@@ -128,7 +128,7 @@ final V putVal(int hash, K key, V value, boolean onlyIfAbsent,
 
 ![put](images/java_hashmap_put.png)
 
-#### `hash()`方法
+#### `hash(Object key)`方法
 
 在`Java 8`中优化了`hash()`算法，通过将`key`的`hashCode`值的高`16`位与低`16`位使用`^`运算符操作获得的值，
 不仅能保证`hash`方法的高效，还使`hashCode`的高低位都参与计算，实现减少冲突的目的。
@@ -159,10 +159,18 @@ _在并发场景中，应该使用线程安全的`ConcurrentHashMap`_
 
 ### LinkedHashMap
 
+- 有序，不允许重复
+- `key`对象需要实现`hashCode()`方法和`equals()`方法
+- 允许`key`和`value`为`null`值
+
 `LinkedHashMap`是`HashMap`的一个子类，由于其内部维护了一个双向链表，因此可以按插入顺序遍历元素。
 此外，`LinkedHashMap`可以很好的支持`LRU (Least Recently Used)`算法，调用构造方法时将`accessOrder`设置为`true`，即可按照访问次序排序。
 
 ### TreeMap
+
+- 有序，不允许重复（非插入顺序，而是根据指定的`Comparator`比较器）
+- 元素对象需要实现`Comparable`接口的`compareTo()`方法和`equals()`方法
+- 不允许`key`为`null`值，允许`value`为`null`值
 
 `TreeMap`实现了`SortedMap`接口。由于其是基于红黑树实现的，因此`key`必须实现`Comparable`接口或在调用构造方法时指定`Comparator`，
 否则会在运行时抛出`java.lang.ClassCastException`异常。
@@ -198,7 +206,11 @@ _在并发场景中，应该使用线程安全的`ConcurrentHashMap`_
 
 总结：`Red–black tree`多用于内存中排序，`B-tree`和`B+tree`主要用于数据存储在磁盘上的场景。
 
-### ~~HashTable~~
+### HashTable
+
+- 无序，不允许`key`重复
+- `key`对象需要实现`hashCode()`方法和`equals()`方法
+- 不允许`key`和`value`为`null`值
 
 `HashTable`是遗留类，与`HashMap`类似，不同的是它承自`Dictionary`类，由于其均方法使用`synchronized`修饰，因此是线程安全的，但并发性远不如`ConcurrentHashMap`，不建议使用。
 
@@ -642,6 +654,128 @@ _TODO_
 - LongAdder
 
 ### ConcurrentHashMap
+
+`Java 7`及之前的版本`ConcurrentHashMap`是基于`Segment`数组加`HashEntry`链表实现的，所以操作元素还是需要遍历链表，导致效率不是很高。。
+
+`Java 8`版本弃用了`Segment`分段锁，而是采用了`CAS`和`synchronized`结合的方式保证并发安全性。
+跟`HashMap`相似，把`HashEntry`改为了`Node`但作用不变，并且也引入了红黑树。
+
+#### ConcurrentHashMap in Java 7
+
+在`Java 7`及之前的版本中，采用了分段锁方案，`Segment`继承于`ReentrantLock`，当一个线程访问一个`Segment`时，不会影响到其他的`Segment`，
+换而言之，如果有一个`ConcurrentHashMap`的`segments`大小为`16`时，可以允许`16`个线程同时操作`16`个`Segment`，既线程安全，又不会发生竞争。
+
+![java_concurrenthashmap_segments.png](images/java_concurrenthashmap_segments.png)
+
+##### `put(K key, V value)`方法
+
+计算`key`的`hashCode`在`segments`中定位`key`所在的`Segment`。
+
+```java
+public V put(K key, V value) {
+    Segment<K,V> s;
+    if (value == null)
+        throw new NullPointerException();
+    int hash = hash(key);
+    int j = (hash >>> segmentShift) & segmentMask;
+    if ((s = (Segment<K,V>)UNSAFE.getObject          // nonvolatile; recheck
+         (segments, (j << SSHIFT) + SBASE)) == null) //  in ensureSegment
+        s = ensureSegment(j);
+    return s.put(key, hash, value, false);
+}
+```
+
+调用`tryLock()`尝试获取锁，如果获取失败说明有其他线程存在竞争，随后调用`scanAndLockForPut(K key, int hash, V value)`自旋获取锁，
+如果重试的次数达到了`MAX_SCAN_RETRIES`则调用`lock()`用阻塞方式获取锁，防止`CPU`空转。
+获取到锁之后，通过`key`的`hashCode`在`table`中定位到`HashEntry`，
+若`value`不存在就新增`HashEntry`；若存在替换原`HashEntry`的`value`。
+
+```java
+static final class Segment<K,V> extends ReentrantLock implements Serializable {
+    static final int MAX_SCAN_RETRIES =
+            Runtime.getRuntime().availableProcessors() > 1 ? 64 : 1;
+    transient volatile HashEntry<K,V>[] table;
+    
+    final V put(K key, int hash, V value, boolean onlyIfAbsent) {
+        HashEntry<K,V> node = tryLock() ? null :
+            scanAndLockForPut(key, hash, value);
+        V oldValue;
+        try {
+            HashEntry<K,V>[] tab = table;
+            int index = (tab.length - 1) & hash;
+            HashEntry<K,V> first = entryAt(tab, index);
+            for (HashEntry<K,V> e = first;;) {
+                if (e != null) {
+                    K k;
+                    if ((k = e.key) == key ||
+                        (e.hash == hash && key.equals(k))) {
+                        oldValue = e.value;
+                        if (!onlyIfAbsent) {
+                            e.value = value;
+                            ++modCount;
+                        }
+                        break;
+                    }
+                    e = e.next;
+                }
+                else {
+                    if (node != null)
+                        node.setNext(first);
+                    else
+                        node = new HashEntry<K,V>(hash, key, value, first);
+                    int c = count + 1;
+                    if (c > threshold && tab.length < MAXIMUM_CAPACITY)
+                        rehash(node);
+                    else
+                        setEntryAt(tab, index, node);
+                    ++modCount;
+                    count = c;
+                    oldValue = null;
+                    break;
+                }
+            }
+        } finally {
+            unlock();
+        }
+        return oldValue;
+    }
+}
+```
+
+##### `get(Object key)`方法
+
+首先计算`key`的`hashCode`在`segments`中定位`key`所在的`Segment`，再在`table`中定位到`HashEntry`。
+由于`HashEntry`中的`value`属性是用`volatile`关键词修饰的，保证了内存可见性，所以每次获取时都是最新值。
+
+_整个过程都不需要加锁。_
+
+```java
+public V get(Object key) {
+    Segment<K,V> s; // manually integrate access methods to reduce overhead
+    HashEntry<K,V>[] tab;
+    int h = hash(key);
+    long u = (((h >>> segmentShift) & segmentMask) << SSHIFT) + SBASE;
+    if ((s = (Segment<K,V>)UNSAFE.getObjectVolatile(segments, u)) != null &&
+        (tab = s.table) != null) {
+        for (HashEntry<K,V> e = (HashEntry<K,V>) UNSAFE.getObjectVolatile
+                 (tab, ((long)(((tab.length - 1) & h)) << TSHIFT) + TBASE);
+             e != null; e = e.next) {
+            K k;
+            if ((k = e.key) == key || (e.hash == h && key.equals(k)))
+                return e.value;
+        }
+    }
+    return null;
+}
+```
+
+#### ConcurrentHashMap in Java 8
+
+关于为什么`ConcurrentHashMap`不允许`key`和`value`为`null`值，作者`Doug Lea`对这个问题有过回答。
+原因是在并发编程中`null`值会有歧义，若调用`get(Object key)`返回的结果是`null`，此时无法确认这个`key`对应的`value`本身就是`null`，还是该`key`根本就不存在。
+在非并发编程中，可以进一步通过调用`containsKey(Object key)`来进行判断，但是并发编程中无法保证两个方法之间没有其他线程来修改该`key`，所以应该禁止使用`null`值。
+
+> The main reason that nulls aren't allowed in ConcurrentMaps (ConcurrentHashMaps, ConcurrentSkipListMaps) is that ambiguities that may be just barely tolerable in non-concurrent maps can't be accommodated. The main one is that if map.get(key) returns null, you can't detect whether the key explicitly maps to null vs the key isn't mapped. In a non-concurrent map, you can check this via map.contains(key), but in a concurrent one, the map might have changed between calls.
 
 ### CopyOnWriteArrayList
 

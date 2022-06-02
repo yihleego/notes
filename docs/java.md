@@ -200,8 +200,64 @@ _在并发场景中，应该使用线程安全的`ConcurrentHashMap`_
 
 ### ~~HashTable~~
 
-`HashTable`是遗留类，与`HashMap`类似，不同的是它承自`Dictionary`类，由于其均方法使用`synchronized`修饰，因此是线程安全的，但并发性远不如`ConcurrentHashMap`
-，不建议使用。
+`HashTable`是遗留类，与`HashMap`类似，不同的是它承自`Dictionary`类，由于其均方法使用`synchronized`修饰，因此是线程安全的，但并发性远不如`ConcurrentHashMap`，不建议使用。
+
+### Collections.synchronizedMap()
+
+`Collections.synchronizedMap()`方法需要传入一个`Map`对象，并返回一个`SynchronizedMap`对象，其原理为包装原`Map`对象，并通过`mutex`互斥锁对所有方法进行加锁，所以其性能不佳，应该优先考虑使用`ConcurrentHashMap`。
+
+```java
+public static <K,V> Map<K,V> synchronizedMap(Map<K,V> m) {
+    return new SynchronizedMap<>(m);
+}
+
+private static class SynchronizedMap<K,V>
+    implements Map<K,V>, Serializable {
+    private static final long serialVersionUID = 1978198479659022715L;
+
+    private final Map<K,V> m;     // Backing Map
+    final Object      mutex;        // Object on which to synchronize
+
+    SynchronizedMap(Map<K,V> m) {
+        this.m = Objects.requireNonNull(m);
+        mutex = this;
+    }
+
+    SynchronizedMap(Map<K,V> m, Object mutex) {
+        this.m = m;
+        this.mutex = mutex;
+    }
+    
+    public int size() {
+        synchronized (mutex) {return m.size();}
+    }
+    public boolean isEmpty() {
+        synchronized (mutex) {return m.isEmpty();}
+    }
+    public boolean containsKey(Object key) {
+        synchronized (mutex) {return m.containsKey(key);}
+    }
+    public boolean containsValue(Object value) {
+        synchronized (mutex) {return m.containsValue(value);}
+    }
+    public V get(Object key) {
+        synchronized (mutex) {return m.get(key);}
+    }
+
+    public V put(K key, V value) {
+        synchronized (mutex) {return m.put(key, value);}
+    }
+    public V remove(Object key) {
+        synchronized (mutex) {return m.remove(key);}
+    }
+    public void putAll(Map<? extends K, ? extends V> map) {
+        synchronized (mutex) {m.putAll(map);}
+    }
+    public void clear() {
+        synchronized (mutex) {m.clear();}
+    }
+}
+```
 
 ## Locks 锁
 

@@ -771,6 +771,425 @@ public V get(Object key) {
 
 #### ConcurrentHashMap in Java 8
 
+##### `initTable()`方法
+
+若`table`为空时，调用以下方法会进行初始化：
+
+- putVal(K, V, boolean)
+- computeIfAbsent(K, Function<? super K, ? extends V>)
+- computeIfPresent(K, BiFunction<? super K, ? super V, ? extends V>)
+- compute(K, BiFunction<? super K, ? super V, ? extends V>)
+- merge(K, V, BiFunction<? super V, ? super V, ? extends V>)
+
+通过`CAS`初始化`table`数组，若存在其他线程正在初始化，会通过自旋方式等待初始化完成：
+
+```java
+private final Node<K,V>[] initTable() {
+    Node<K,V>[] tab; int sc;
+    // 自旋
+    while ((tab = table) == null || tab.length == 0) {
+        if ((sc = sizeCtl) < 0)
+            // 正在初始化，线程让步
+            Thread.yield(); // lost initialization race; just spin
+        else if (U.compareAndSwapInt(this, SIZECTL, sc, -1)) {
+            try {
+                if ((tab = table) == null || tab.length == 0) {
+                    // 使用指定初始容量或默认初始容量
+                    int n = (sc > 0) ? sc : DEFAULT_CAPACITY; 
+                    @SuppressWarnings("unchecked")
+                    Node<K,V>[] nt = (Node<K,V>[])new Node<?,?>[n];
+                    table = tab = nt;
+                    // 计算扩容阈值，即3/4
+                    sc = n - (n >>> 2);
+                }
+            } finally {
+                // 将下扩容阈值赋给sizeCtl
+                sizeCtl = sc; 
+            }
+            break;
+        }
+    }
+    return tab;
+}
+```
+
+`ConcurrentHashMap`处于不同状态，`sizeCtl`所代表的含义也有所不同：
+
+- 未初始化：`sizeCtl=0`表⽰没有指定初始容量。`sizeCtl>0`表⽰初始容量。
+- 初始化中：`sizeCtl=-1`表⽰正在初始化
+- 正常状态：`sizeCtl=0.75n`表示扩容阈值
+- 扩容中：`sizeCtl<-1`表⽰有`1-sizeCtl`个线程正在执⾏扩容，如`-2`表示有`1`个线程正在执⾏扩容。
+
+##### `put(K key, V value)`方法
+
+```java
+public V put(K key, V value) {
+    return putVal(key, value, false);
+}
+
+final V putVal(K key, V value, boolean onlyIfAbsent) {
+    if (key == null || value == null) throw new NullPointerException();
+    int hash = spread(key.hashCode());
+    int binCount = 0;
+    for (Node<K,V>[] tab = table;;) {
+        Node<K,V> f; int n, i, fh;
+        if (tab == null || (n = tab.length) == 0)
+            // 若table为空则进行初始化
+            tab = initTable();
+        else if ((f = tabAt(tab, i = (n - 1) & hash)) == null) {
+            // key在table上的Node为null时，尝试通过CAS方式写入数据
+            if (casTabAt(tab, i, null, new Node<K,V>(hash, key, value, null)))
+                break; // no lock when adding to empty bin
+        }
+        else if ((fh = f.hash) == MOVED)
+            // key在table上的Node不为null时，且其hash值为MOVED，说明正在扩容，调用helpTransfer协助扩容
+            // ForwardingNode对象的hashCode固定为MOVED
+            tab = helpTransfer(tab, f);
+        else {
+            // 以上条件都不满足时，通过synchronized锁写入数据
+            V oldVal = null;
+            synchronized (f) {
+                // ...
+            }
+            // 判断是否需要转化为红黑树
+            if (binCount != 0) {
+                if (binCount >= TREEIFY_THRESHOLD)
+                    treeifyBin(tab, i);
+                if (oldVal != null)
+                    return oldVal;
+                break;
+            }
+        }
+    }
+    // 新增完成后计数加1
+    addCount(1L, binCount);
+    return null;
+}
+```
+
+并发添加元素时，如果当前正在扩容，其他线程甚至于还会协助扩容，也就是多线程扩容。
+
+```java
+static final class ForwardingNode<K,V> extends Node<K,V> {
+    ForwardingNode(Node<K,V>[] tab) {
+        super(MOVED, null, null, null); // hash, key, val, next
+        this.nextTable = tab;
+    }
+}
+
+final Node<K,V>[] helpTransfer(Node<K,V>[] tab, Node<K,V> f) {
+    Node<K,V>[] nextTab; int sc;
+    if (tab != null && (f instanceof ForwardingNode) &&
+        (nextTab = ((ForwardingNode<K,V>)f).nextTable) != null) {
+        // 根据原length得到一个标识符
+        int rs = resizeStamp(tab.length);
+        // 如果nextTable和table均未被替换，且sizeCtl<0，说明扩容仍在继续
+        while (nextTab == nextTable && table == tab && (sc = sizeCtl) < 0) {
+            if ((sc >>> RESIZE_STAMP_SHIFT) != rs  // 若sizeCtl无符号右移16位不等于rs，说明标识符发生了变化
+                || sc == rs + 1                    // 若sizeCtl等于rs+1，说明扩容已经结束
+                || sc == rs + MAX_RESIZERS         // 若sizeCtl等于rs+65535，说明达到最大帮助线程的数量
+                || transferIndex <= 0)             // 若transferIndex小于等于0，说明扩容已经结束，transferIndex用于并发扩容时分段迁移
+                break;                             // 结束循环
+            if (U.compareAndSwapInt(this, SIZECTL, sc, sc + 1)) {
+                // 通过CAS方式sizeCtl+1，表示增加了一个线程帮助扩容
+                transfer(tab, nextTab);
+                break;
+            }
+        }
+        return nextTab;
+    }
+    return table;
+}
+```
+
+在`HashMap`中，调用`put`方法之后会通过`++size`的方式来存储当前集合中元素的个数，但是在并发场景下，这种操作是不安全的。
+
+于是我们很容易想到通过`CAS`操作修改`size`值，但是如果同时存在很多线程需要修改`size`值，会导致大部分线程不断地尝试`CAS`，进而影响`put`方法的性能，所以作者并为使用这种方法，而是采用了一个分而治之的方案来完成计数。
+
+`ConcurrentHashMap`定义了一个`baseCount`长整数和`counterCells`数组来计数，每次线程需要计数的时候，先通过`CAS`操作对`baseCount`进行加`1`。
+如果操作失败了说明存在线程竞争，改用`counterCells`进行计数，随机获取一个`counterCells`数组索引的位置进行操作，这样就可以尽可能的降低了锁的粒度。
+调用`size`方法时，遍历数组累加所有值并返回，而且`counterCells`也能扩容，扩容的大小为原来的`2`倍。
+
+```java
+private transient volatile long baseCount;
+private transient volatile CounterCell[] counterCells;
+
+static final class CounterCell {
+    volatile long value;
+    CounterCell(long x) { value = x; }
+}
+
+final long sumCount() {
+    CounterCell[] as = counterCells; CounterCell a;
+    long sum = baseCount;
+    if (as != null) {
+        for (int i = 0; i < as.length; ++i) {
+            if ((a = as[i]) != null)
+                sum += a.value;
+        }
+    }
+    return sum;
+}
+
+private final void addCount(long x, int check) {
+    CounterCell[] as; long b, s;
+    // 满足以下任意条件时进入分支
+    // 1. 如果counterCells不为null
+    // 2. 如果counterCells为null，且通过CAS修改baseCount失败
+    if ((as = counterCells) != null ||
+        !U.compareAndSwapLong(this, BASECOUNT, b = baseCount, s = b + x)) {
+        CounterCell a; long v; int m;
+        boolean uncontended = true;
+        // 满足以下任意条件时执行fullAddCount方法对counterCells初始化和赋值
+        // 1. 如果counterCells为null
+        // 2. 如果取到随机位置的对象为null
+        // 3. 如果通过CAS修改随机位置的值失败
+        if (as == null || (m = as.length - 1) < 0 ||
+            (a = as[ThreadLocalRandom.getProbe() & m]) == null ||
+            !(uncontended =
+              U.compareAndSwapLong(a, CELLVALUE, v = a.value, v + x))) {
+            fullAddCount(x, uncontended);
+            return;
+        }
+        if (check <= 1)
+            return;
+        s = sumCount();
+    }
+    // 传入的check值大于等于0时，判断是否需要扩容
+    if (check >= 0) {
+        Node<K,V>[] tab, nt; int n, sc;
+        // 如果当前size大于sizeCtl（即大小已经达到了扩容阈值）
+        while (s >= (long)(sc = sizeCtl) && (tab = table) != null &&
+               (n = tab.length) < MAXIMUM_CAPACITY) {
+            int rs = resizeStamp(n);
+            if (sc < 0) {
+                // 存在其他线程正在扩容
+                if ((sc >>> RESIZE_STAMP_SHIFT) != rs // 若sizeCtl无符号右移16位不等于rs，说明标识符发生了变化
+                    || sc == rs + 1                   // 若sizeCtl等于rs+1，说明扩容已经结束
+                    || sc == rs + MAX_RESIZERS        // 若sizeCtl等于rs+65535，说明达到最大帮助线程的数量
+                    || (nt = nextTable) == null       // 若nextTable为空说明扩容已经结束，nextTable是扩容后的新数组
+                    || transferIndex <= 0)            // 若transferIndex小于等于0，说明扩容已经结束，transferIndex用于并发扩容时分段迁移
+                    break;                            // 结束循环
+                if (U.compareAndSwapInt(this, SIZECTL, sc, sc + 1))
+                    // 通过CAS方式sizeCtl+1，表示增加了一个线程帮助扩容
+                    transfer(tab, nt);
+            }
+            else if (U.compareAndSwapInt(this, SIZECTL, sc,
+                                         (rs << RESIZE_STAMP_SHIFT) + 2)) // 标识符左移16位并加2，此时值为复数，高16位为标识符，低16位为2
+                // 不存在其他线程正在扩容，修改sizeCtl为-2（忽略高16位标识符）
+                transfer(tab, null);
+            s = sumCount();
+        }
+    }
+}
+```
+
+满足以下条件时，会对`counterCells`进行扩容：
+
+- `counterCells`已经初始化完成
+- `hashCode`对应的`counterCells`下标元素不为`null`
+- 通过`CAS`操作修改`counterCells`指定下标位置中对象的数量失败，说明有其他线程在竞争修改同一个数组下标中的元素
+- `counterCells`数组长度小于可用CPU数量
+- 没有其他线程创建了新的`counterCells`
+
+##### `transfer(Node<K,V>[] tab, Node<K,V>[] nextTab)`方法 并发扩容和迁移
+
+`ConcurrentHashMap`采用的是分段扩容法，即每个线程每次负责迁移一部分数据，迁移数据大小`stride`的计算公式为`当前数组长度 / 8 / 可用CPU数量`，默认最小是`16`。如果当前只有`16`个槽位，那么就只会有`1`个线程参与扩容。
+
+每个线程通过`CAS`修改`transferIndex`值来划分各自负责的区间。
+
+```java
+static final int NCPU = Runtime.getRuntime().availableProcessors();
+private static final int MIN_TRANSFER_STRIDE = 16;
+
+private final void transfer(Node<K,V>[] tab, Node<K,V>[] nextTab) {
+    int n = tab.length, stride;
+    // 如果 length/8/NCPU 小于16，则每段长度为默认16，针对原数组长度较小或可用CPU数量较少时的场景优化
+    // 通过公式计算的目的是为了让每个CPU处理的长度保持一致
+    if ((stride = (NCPU > 1) ? (n >>> 3) / NCPU : n) < MIN_TRANSFER_STRIDE)
+        stride = MIN_TRANSFER_STRIDE; // subdivide range
+    // nextTab是扩容后的新数组，为null表示还未被初始化，需要初始化
+    if (nextTab == null) {            // initiating
+        try {
+            // 实例化一个新数组，大小为原来的2倍
+            @SuppressWarnings("unchecked")
+            Node<K,V>[] nt = (Node<K,V>[])new Node<?,?>[n << 1];
+            nextTab = nt;
+        } catch (Throwable ex) {      // try to cope with OOME
+            // 扩容失败则将sizeCtl设置为最大值，表示之后不再触发扩容
+            sizeCtl = Integer.MAX_VALUE;
+            return;
+        }
+        // 赋值新数组，等待迁移数据
+        nextTable = nextTab;
+        // 迁移索引，设置为原数组大小，每次
+        transferIndex = n;
+    }
+    // 新数组长度
+    int nextn = nextTab.length;
+    // 创建一个ForwardingNode表示正在迁移的节点，其hashCode值为MOVED（-1）
+    ForwardingNode<K,V> fwd = new ForwardingNode<K,V>(nextTab);
+    // 推进状态，如果为true则表示需要继续修改transferIndex迁移数据
+    boolean advance = true;
+    // 完成状态，如果为true则表示已经完成扩容，中断循环并返回
+    boolean finishing = false; // to ensure sweep before committing nextTab
+    // 循环处理，i表示当前bucket的下标，bound表示当前线程下标的边界（最小下标）
+    for (int i = 0, bound = 0;;) {
+        Node<K,V> f; int fh;
+        // 如果当前线程可以继续推进，每个线程进入循环都会获取自己负责的区间
+        while (advance) {
+            int nextIndex, nextBound;
+            // i递减，如果大于等于bound（区间未处理完）或者已完成，修改推进状态为false
+            if (--i >= bound || finishing)
+                advance = false;
+            // 如果小于等于0，表示没有区间需要处理，i设置为-1，推进状态设置为false，结束当前线程扩容操作
+            else if ((nextIndex = transferIndex) <= 0) {
+                i = -1;
+                advance = false;
+            }
+            // 通过CAS修改transferIndex，为当前线程分配需要迁移的区间，区间为：[nextBound, nextIndex)
+            // 剩余的区间留给后面的线程使用
+            else if (U.compareAndSwapInt
+                     (this, TRANSFERINDEX, nextIndex,
+                      nextBound = (nextIndex > stride ?
+                                   nextIndex - stride : 0))) {
+                bound = nextBound;
+                i = nextIndex - 1;
+                advance = false;
+            }
+        }
+        // i < 0 表示原数组已经迁移完毕
+        if (i < 0 || i >= n || i + n >= nextn) {
+            int sc;
+            // 扩容已完成（由最后一个结束扩容的线程执行）
+            if (finishing) {
+                nextTable = null; // 释放nextTable
+                table = nextTab;  // 替换table
+                sizeCtl = (n << 1) - (n >>> 1); // 更新扩容阈值
+                return;
+            }
+            // 当前线程结束了协助扩容操作，sizeCtl低16位减1
+            if (U.compareAndSwapInt(this, SIZECTL, sc = sizeCtl, sc - 1)) {
+                // 如果sizeCtl-2不等于标识符左移16位，说明还有线程在协助扩容，当前线程结束扩容操作
+                if ((sc - 2) != resizeStamp(n) << RESIZE_STAMP_SHIFT)
+                    return;
+                // 如果sizeCtl-2等于标识符左移16位，说明没有线程在协助扩容，扩容结束
+                finishing = advance = true;
+                i = n; // recheck before commit
+            }
+        }
+        else if ((f = tabAt(tab, i)) == null)
+            advance = casTabAt(tab, i, null, fwd);
+        else if ((fh = f.hash) == MOVED)
+            advance = true; // already processed
+        else {
+            synchronized (f) {
+                if (tabAt(tab, i) == f) {
+                    Node<K,V> ln, hn;
+                    if (fh >= 0) {
+                        int runBit = fh & n;
+                        Node<K,V> lastRun = f;
+                        for (Node<K,V> p = f.next; p != null; p = p.next) {
+                            int b = p.hash & n;
+                            if (b != runBit) {
+                                runBit = b;
+                                lastRun = p;
+                            }
+                        }
+                        if (runBit == 0) {
+                            ln = lastRun;
+                            hn = null;
+                        }
+                        else {
+                            hn = lastRun;
+                            ln = null;
+                        }
+                        for (Node<K,V> p = f; p != lastRun; p = p.next) {
+                            int ph = p.hash; K pk = p.key; V pv = p.val;
+                            if ((ph & n) == 0)
+                                ln = new Node<K,V>(ph, pk, pv, ln);
+                            else
+                                hn = new Node<K,V>(ph, pk, pv, hn);
+                        }
+                        setTabAt(nextTab, i, ln);
+                        setTabAt(nextTab, i + n, hn);
+                        setTabAt(tab, i, fwd);
+                        advance = true;
+                    }
+                    else if (f instanceof TreeBin) {
+                        TreeBin<K,V> t = (TreeBin<K,V>)f;
+                        TreeNode<K,V> lo = null, loTail = null;
+                        TreeNode<K,V> hi = null, hiTail = null;
+                        int lc = 0, hc = 0;
+                        for (Node<K,V> e = t.first; e != null; e = e.next) {
+                            int h = e.hash;
+                            TreeNode<K,V> p = new TreeNode<K,V>
+                                (h, e.key, e.val, null, null);
+                            if ((h & n) == 0) {
+                                if ((p.prev = loTail) == null)
+                                    lo = p;
+                                else
+                                    loTail.next = p;
+                                loTail = p;
+                                ++lc;
+                            }
+                            else {
+                                if ((p.prev = hiTail) == null)
+                                    hi = p;
+                                else
+                                    hiTail.next = p;
+                                hiTail = p;
+                                ++hc;
+                            }
+                        }
+                        ln = (lc <= UNTREEIFY_THRESHOLD) ? untreeify(lo) :
+                            (hc != 0) ? new TreeBin<K,V>(lo) : t;
+                        hn = (hc <= UNTREEIFY_THRESHOLD) ? untreeify(hi) :
+                            (lc != 0) ? new TreeBin<K,V>(hi) : t;
+                        setTabAt(nextTab, i, ln);
+                        setTabAt(nextTab, i + n, hn);
+                        setTabAt(tab, i, fwd);
+                        advance = true;
+                    }
+                }
+            }
+        }
+    }
+}
+```
+
+![java_concurrenthashmap_transfer](images/java_concurrenthashmap_transfer.png)
+
+##### `get(Object key)`方法
+
+```java
+public V get(Object key) {
+    Node<K,V>[] tab; Node<K,V> e, p; int n, eh; K ek;
+    int h = spread(key.hashCode()); // 计算hashCode
+    if ((tab = table) != null && (n = tab.length) > 0 &&
+        (e = tabAt(tab, (n - 1) & h)) != null) { // table不为空且对应位置存在节点时
+        // 如果首节点hashCode和equals方法都相等，则直接返回该节点的value
+        if ((eh = e.hash) == h) {
+            if ((ek = e.key) == key || (ek != null && key.equals(ek)))
+                return e.val;
+        }
+        // hashCode = -1，说明该节点是ForwardingNode，调用ForwardingNode的find方法在nextTable中搜索。
+        // hashCode = -2，说明该节点是TreeBin，调用TreeBin的find方法遍历红黑树，由于红黑树有可能正在旋转变色，所以find里会有读写锁。
+        else if (eh < 0)
+            return (p = e.find(h, key)) != null ? p.val : null;
+        // hashCode >= 0，说明该节点是链表，遍历链表直到找到改key。
+        while ((e = e.next) != null) {
+            if (e.hash == h &&
+                ((ek = e.key) == key || (ek != null && key.equals(ek))))
+                return e.val;
+        }
+    }
+    return null;
+}
+```
+
+#### 为什么不允许`null`值
+
 关于为什么`ConcurrentHashMap`不允许`key`和`value`为`null`值，作者`Doug Lea`对这个问题有过回答。
 原因是在并发编程中`null`值会有歧义，若调用`get(Object key)`返回的结果是`null`，此时无法确认这个`key`对应的`value`本身就是`null`，还是该`key`根本就不存在。
 在非并发编程中，可以进一步通过调用`containsKey(Object key)`来进行判断，但是并发编程中无法保证两个方法之间没有其他线程来修改该`key`，所以应该禁止使用`null`值。

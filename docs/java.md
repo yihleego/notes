@@ -76,19 +76,19 @@ public V put(K key, V value) {
 final V putVal(int hash, K key, V value, boolean onlyIfAbsent,
                boolean evict) {
     Node<K,V>[] tab; Node<K,V> p; int n, i;
-    // 1.若table，则调用resize初始化
+    // 1.如果table，则调用resize初始化
     if ((tab = table) == null || (n = tab.length) == 0)
         n = (tab = resize()).length;
-    // 2.通过hash计算索引，并判断node是否存在，若不存在则创建新node并添加元素，否则执行第3步
+    // 2.通过hash计算索引，并判断node是否存在，如果不存在则创建新node并添加元素，否则执行第3步
     if ((p = tab[i = (n - 1) & hash]) == null)
         tab[i] = newNode(hash, key, value, null);
     else {
         Node<K,V> e; K k;
-        // 3.若node存在，且node的hash和key与待保存元素的hash和key相等，则覆盖value
+        // 3.如果node存在，且node的hash和key与待保存元素的hash和key相等，则覆盖value
         if (p.hash == hash &&
             ((k = p.key) == key || (key != null && key.equals(k))))
             e = p;
-        // 4.若node类型为TreeNode，则向红黑树中插入元素
+        // 4.如果node类型为TreeNode，则向红黑树中插入元素
         else if (p instanceof TreeNode)
             e = ((TreeNode<K,V>)p).putTreeVal(this, tab, hash, key, value);
         // 5.遍历链表
@@ -97,7 +97,7 @@ final V putVal(int hash, K key, V value, boolean onlyIfAbsent,
                 // 5.1.遍历至node的next为null时，向后追加元素，并结束遍历
                 if ((e = p.next) == null) {
                     p.next = newNode(hash, key, value, null);
-                    // 5.2.若链表长度超过可树化的阈值时，将链表转化为红黑树
+                    // 5.2.如果链表长度超过可树化的阈值时，将链表转化为红黑树
                     if (binCount >= TREEIFY_THRESHOLD - 1) // -1 for 1st
                         treeifyBin(tab, hash);
                     break;
@@ -771,26 +771,36 @@ public V get(Object key) {
 
 #### ConcurrentHashMap in Java 8
 
+##### `sizeCtl`属性
+
+`sizeCtl`主要用于控制`table`初始化和扩容，在`ConcurrentHashMap`不同阶段，其值所代表的意义也不同：
+
+- 未初始化：`sizeCtl = 0`表⽰没有指定初始容量；`sizeCtl > 0`表⽰指定的初始容量（`2`的幂）
+- 初始化中：`sizeCtl = -1`表⽰正在初始化
+- 正在扩容：`sizeCtl < -1`表⽰有`|sizeCtl| - 1`个线程正在执⾏扩容，例如：`-2`表示有`1`个线程正在执⾏扩容（忽略高16位标识符）
+- 正常状态：`sizeCtl = 0.75N`表示扩容阈值
+
 ##### `initTable()`方法
 
-若`table`为空时，调用以下方法会进行初始化：
+若`table`未初始化时，调用以下方法会进行初始化：
 
-- putVal(K, V, boolean)
-- computeIfAbsent(K, Function<? super K, ? extends V>)
-- computeIfPresent(K, BiFunction<? super K, ? super V, ? extends V>)
-- compute(K, BiFunction<? super K, ? super V, ? extends V>)
-- merge(K, V, BiFunction<? super V, ? super V, ? extends V>)
+- `public V put(K key, V value)`
+- `public V computeIfAbsent(K key, Function<? super K, ? extends V> mappingFunction)`
+- `public V computeIfPresent(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction)`
+- `public V compute(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction)`
+- `public V merge(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction)`
 
-通过`CAS`初始化`table`数组，若存在其他线程正在初始化，会通过自旋方式等待初始化完成：
+通过自旋和`CAS`操作初始化`table`数组，若存在其他线程正在初始化，会通过自旋方式等待初始化完成：
 
 ```java
 private final Node<K,V>[] initTable() {
     Node<K,V>[] tab; int sc;
-    // 自旋
+    // 如果table还未初始化完成，则自旋
     while ((tab = table) == null || tab.length == 0) {
+        // sizeCtl < 0 表示正在初始化或扩容中，线程让步
         if ((sc = sizeCtl) < 0)
-            // 正在初始化，线程让步
             Thread.yield(); // lost initialization race; just spin
+        // 通过CAS操作修改sizeCtl的值为-1，修改成功表示成功获取锁，进行初始化操作
         else if (U.compareAndSwapInt(this, SIZECTL, sc, -1)) {
             try {
                 if ((tab = table) == null || tab.length == 0) {
@@ -799,11 +809,11 @@ private final Node<K,V>[] initTable() {
                     @SuppressWarnings("unchecked")
                     Node<K,V>[] nt = (Node<K,V>[])new Node<?,?>[n];
                     table = tab = nt;
-                    // 计算扩容阈值，即3/4
+                    // 计算扩容阈值，即当前容量3/4
                     sc = n - (n >>> 2);
                 }
             } finally {
-                // 将下扩容阈值赋给sizeCtl
+                // 将扩容阈值赋给sizeCtl
                 sizeCtl = sc; 
             }
             break;
@@ -812,13 +822,6 @@ private final Node<K,V>[] initTable() {
     return tab;
 }
 ```
-
-`ConcurrentHashMap`处于不同状态，`sizeCtl`所代表的含义也有所不同：
-
-- 未初始化：`sizeCtl=0`表⽰没有指定初始容量。`sizeCtl>0`表⽰初始容量。
-- 初始化中：`sizeCtl=-1`表⽰正在初始化
-- 正常状态：`sizeCtl=0.75n`表示扩容阈值
-- 扩容中：`sizeCtl<-1`表⽰有`1-sizeCtl`个线程正在执⾏扩容，如`-2`表示有`1`个线程正在执⾏扩容。
 
 ##### `put(K key, V value)`方法
 
@@ -829,21 +832,26 @@ public V put(K key, V value) {
 
 final V putVal(K key, V value, boolean onlyIfAbsent) {
     if (key == null || value == null) throw new NullPointerException();
+    // 计算hashCode
     int hash = spread(key.hashCode());
+    // 用于addCount方法检查扩容
+    // 如果是链表，则代表长度，长度超过TREEIFY_THRESHOLD(8)会转化为红黑树
+    // 如果是红黑树，则固定为2
     int binCount = 0;
+    // 自旋直到元素被写入成功
     for (Node<K,V>[] tab = table;;) {
         Node<K,V> f; int n, i, fh;
         if (tab == null || (n = tab.length) == 0)
-            // 若table为空则进行初始化
+            // 如果table为空则进行初始化
             tab = initTable();
         else if ((f = tabAt(tab, i = (n - 1) & hash)) == null) {
-            // key在table上的Node为null时，尝试通过CAS方式写入数据
+            // key对应的元素在table上为null时，尝试通过CAS方式写入数据，写入成功后中断自旋
             if (casTabAt(tab, i, null, new Node<K,V>(hash, key, value, null)))
                 break; // no lock when adding to empty bin
         }
         else if ((fh = f.hash) == MOVED)
-            // key在table上的Node不为null时，且其hash值为MOVED，说明正在扩容，调用helpTransfer协助扩容
-            // ForwardingNode对象的hashCode固定为MOVED
+            // key对应的元素在table上不为null时，且其hash值为MOVED(-1)，说明table正在扩容，调用helpTransfer方法协助扩容
+            // ForwardingNode对象的hashCode固定为MOVED(-1)
             tab = helpTransfer(tab, f);
         else {
             // 以上条件都不满足时，通过synchronized锁写入数据
@@ -861,13 +869,13 @@ final V putVal(K key, V value, boolean onlyIfAbsent) {
             }
         }
     }
-    // 新增完成后计数加1
+    // 新增完成后计数加1，并且检查是否需要扩容
     addCount(1L, binCount);
     return null;
 }
 ```
 
-并发添加元素时，如果当前正在扩容，其他线程甚至于还会协助扩容，也就是多线程扩容。
+添加元素时，如果发现当前正在扩容，会调用`helpTransfer`方法协助扩容。
 
 ```java
 static final class ForwardingNode<K,V> extends Node<K,V> {
@@ -877,21 +885,27 @@ static final class ForwardingNode<K,V> extends Node<K,V> {
     }
 }
 
+static final int resizeStamp(int n) {
+    // 返回16位标识符，首位为1
+    return Integer.numberOfLeadingZeros(n) | (1 << (RESIZE_STAMP_BITS - 1));
+}
+
 final Node<K,V>[] helpTransfer(Node<K,V>[] tab, Node<K,V> f) {
     Node<K,V>[] nextTab; int sc;
     if (tab != null && (f instanceof ForwardingNode) &&
         (nextTab = ((ForwardingNode<K,V>)f).nextTable) != null) {
-        // 根据原length得到一个标识符
+        // 根据当前table的length得到一个标识符，例如长度为16时，标识符二进制为：1000000000011011
         int rs = resizeStamp(tab.length);
-        // 如果nextTable和table均未被替换，且sizeCtl<0，说明扩容仍在继续
+        // 如果nextTable和table均未被替换，且sizeCtl < 0，说明扩容仍在继续
         while (nextTab == nextTable && table == tab && (sc = sizeCtl) < 0) {
-            if ((sc >>> RESIZE_STAMP_SHIFT) != rs  // 若sizeCtl无符号右移16位不等于rs，说明标识符发生了变化
-                || sc == rs + 1                    // 若sizeCtl等于rs+1，说明扩容已经结束
-                || sc == rs + MAX_RESIZERS         // 若sizeCtl等于rs+65535，说明达到最大帮助线程的数量
-                || transferIndex <= 0)             // 若transferIndex小于等于0，说明扩容已经结束，transferIndex用于并发扩容时分段迁移
+            if ((sc >>> RESIZE_STAMP_SHIFT) != rs  // 如果sizeCtl无符号右移16位不等于rs，说明标识符发生了变化
+                || sc == rs + 1                    // 如果sizeCtl等于rs + 1，说明扩容已经结束
+                || sc == rs + MAX_RESIZERS         // 如果sizeCtl等于rs + 65535，说明达到最大帮助线程的数量
+                || transferIndex <= 0)             // 如果transferIndex小于等于0，说明数据迁移容的任务已经分配完或扩容已经结束
                 break;                             // 结束循环
+            // 如果满足条件，则通过CAS操作对sizeCtl加1，表示增加一个线程协助扩容    
             if (U.compareAndSwapInt(this, SIZECTL, sc, sc + 1)) {
-                // 通过CAS方式sizeCtl+1，表示增加了一个线程帮助扩容
+                // 当前线程尝试扩容和迁移数据
                 transfer(tab, nextTab);
                 break;
             }
@@ -902,13 +916,15 @@ final Node<K,V>[] helpTransfer(Node<K,V>[] tab, Node<K,V> f) {
 }
 ```
 
-在`HashMap`中，调用`put`方法之后会通过`++size`的方式来存储当前集合中元素的个数，但是在并发场景下，这种操作是不安全的。
+在`HashMap`中，调用`put`方法之后会通过`++size`的方式来存储当前集合中元素的个数，但是在并发场景下，该操作不是原子性的，所以是线程不安全的。
+于是我们很容易想到通过`CAS`操作修改`size`值，但是如果同时存在很多线程需要修改`size`值，会导致大部分线程不断地自旋，从而影响`put`方法整体的性能，
+所以作者采用了一个分治的方案来实现计数。
 
-于是我们很容易想到通过`CAS`操作修改`size`值，但是如果同时存在很多线程需要修改`size`值，会导致大部分线程不断地尝试`CAS`，进而影响`put`方法的性能，所以作者并为使用这种方法，而是采用了一个分而治之的方案来完成计数。
+`ConcurrentHashMap`中分别定义了`long baseCount`和`CounterCell[] counterCells`属性，通过这两个属性来计数`size`值。
+在`counterCells`未初始化的情况下（即没发生过竞争），先通过`CAS`操作对`baseCount`进行加`1`，如果操作成功，则计数操作完成；如果操作失败说明存在竞争，则初始化`counterCells`，并使用`counterCells`进行计数。
+随机获取一个`counterCells`数组的下标进行操作，这样就可以尽可能的降低了锁的粒度，而且`counterCells`也能扩容，扩容的大小为原来的`2`倍。
 
-`ConcurrentHashMap`定义了一个`baseCount`长整数和`counterCells`数组来计数，每次线程需要计数的时候，先通过`CAS`操作对`baseCount`进行加`1`。
-如果操作失败了说明存在线程竞争，改用`counterCells`进行计数，随机获取一个`counterCells`数组索引的位置进行操作，这样就可以尽可能的降低了锁的粒度。
-调用`size`方法时，遍历数组累加所有值并返回，而且`counterCells`也能扩容，扩容的大小为原来的`2`倍。
+调用`size`方法时，遍历`counterCells`数组累加所有值，最后加上`baseCount`的值。
 
 ```java
 private transient volatile long baseCount;
@@ -917,6 +933,13 @@ private transient volatile CounterCell[] counterCells;
 static final class CounterCell {
     volatile long value;
     CounterCell(long x) { value = x; }
+}
+
+public int size() {
+    long n = sumCount();
+    return ((n < 0L) ? 0 :
+            (n > (long)Integer.MAX_VALUE) ? Integer.MAX_VALUE :
+            (int)n);
 }
 
 final long sumCount() {
@@ -935,7 +958,7 @@ private final void addCount(long x, int check) {
     CounterCell[] as; long b, s;
     // 满足以下任意条件时进入分支
     // 1. 如果counterCells不为null
-    // 2. 如果counterCells为null，且通过CAS修改baseCount失败
+    // 2. 如果counterCells为null，且CAS操作修改baseCount失败
     if ((as = counterCells) != null ||
         !U.compareAndSwapLong(this, BASECOUNT, b = baseCount, s = b + x)) {
         CounterCell a; long v; int m;
@@ -958,25 +981,28 @@ private final void addCount(long x, int check) {
     // 传入的check值大于等于0时，判断是否需要扩容
     if (check >= 0) {
         Node<K,V>[] tab, nt; int n, sc;
-        // 如果当前size大于sizeCtl（即大小已经达到了扩容阈值）
+        // 如果当前size >= sizeCtl时（即已经达到了扩容阈值）
         while (s >= (long)(sc = sizeCtl) && (tab = table) != null &&
                (n = tab.length) < MAXIMUM_CAPACITY) {
+            // 根据当前table的length得到一个标识符，例如长度为16时，标识符二进制为：1000000000011011
             int rs = resizeStamp(n);
+            // 判断是否正在扩容，sizeCtl < 0表示正在扩容
             if (sc < 0) {
-                // 存在其他线程正在扩容
-                if ((sc >>> RESIZE_STAMP_SHIFT) != rs // 若sizeCtl无符号右移16位不等于rs，说明标识符发生了变化
-                    || sc == rs + 1                   // 若sizeCtl等于rs+1，说明扩容已经结束
-                    || sc == rs + MAX_RESIZERS        // 若sizeCtl等于rs+65535，说明达到最大帮助线程的数量
-                    || (nt = nextTable) == null       // 若nextTable为空说明扩容已经结束，nextTable是扩容后的新数组
-                    || transferIndex <= 0)            // 若transferIndex小于等于0，说明扩容已经结束，transferIndex用于并发扩容时分段迁移
+                if ((sc >>> RESIZE_STAMP_SHIFT) != rs // 如果sizeCtl无符号右移16位不等于rs，说明标识符发生了变化
+                    || sc == rs + 1                   // 如果sizeCtl等于rs + 1，说明扩容已经结束
+                    || sc == rs + MAX_RESIZERS        // 如果sizeCtl等于rs + 65535，说明达到最大帮助线程的数量
+                    || (nt = nextTable) == null       // 如果nextTable为空说明扩容已经结束，nextTable是扩容后的新数组，只有在扩容时才会存在
+                    || transferIndex <= 0)            // 如果transferIndex小于等于0，说明数据迁移容的任务已经分配完或扩容已经结束
                     break;                            // 结束循环
+                // 如果满足条件，则通过CAS操作对sizeCtl加1，表示增加一个线程协助扩容
                 if (U.compareAndSwapInt(this, SIZECTL, sc, sc + 1))
-                    // 通过CAS方式sizeCtl+1，表示增加了一个线程帮助扩容
+                    // 当前线程尝试扩容和迁移数据
                     transfer(tab, nt);
             }
-            else if (U.compareAndSwapInt(this, SIZECTL, sc,
-                                         (rs << RESIZE_STAMP_SHIFT) + 2)) // 标识符左移16位并加2，此时值为复数，高16位为标识符，低16位为2
-                // 不存在其他线程正在扩容，修改sizeCtl为-2（忽略高16位标识符）
+            // 不存在其他线程正在扩容，标识符左移16位并加2，此时值为负数，高16位为标识符，低16位为2，可视作-2，表示有1个线程正在扩容和迁移数据
+            // 例如table长度为16时，标识符二进制为：1000000000011011，设置sizeCtl为：1000000000011011_0000000000000010
+            else if (U.compareAndSwapInt(this, SIZECTL, sc, (rs << RESIZE_STAMP_SHIFT) + 2)) 
+                // 当前线程尝试扩容和迁移数据
                 transfer(tab, null);
             s = sumCount();
         }
@@ -984,31 +1010,33 @@ private final void addCount(long x, int check) {
 }
 ```
 
-满足以下条件时，会对`counterCells`进行扩容：
+补充，满足以下条件时，会对`counterCells`进行扩容：
 
-- `counterCells`已经初始化完成
+- `counterCells`不为空，即已完成初始化
 - `hashCode`对应的`counterCells`下标元素不为`null`
-- 通过`CAS`操作修改`counterCells`指定下标位置中对象的数量失败，说明有其他线程在竞争修改同一个数组下标中的元素
+- 通过`CAS`操作修改`counterCells`指定下标位置中对象的值失败，说明存在线程竞争
 - `counterCells`数组长度小于可用CPU数量
 - 没有其他线程创建了新的`counterCells`
 
 ##### `transfer(Node<K,V>[] tab, Node<K,V>[] nextTab)`方法 并发扩容和迁移
 
-`ConcurrentHashMap`采用的是分段扩容法，即每个线程每次负责迁移一部分数据，迁移数据大小`stride`的计算公式为`当前数组长度 / 8 / 可用CPU数量`，默认最小是`16`。如果当前只有`16`个槽位，那么就只会有`1`个线程参与扩容。
+`ConcurrentHashMap`采用的是分段扩容法，即每个线程每次负责迁移一部分数据，每次迁移数据数量`stride`默认最小是`16`，其计算公式为`当前数组长度 / 8 / 可用CPU数量`，
+例如当前数组长度为`1024`，CPU数量为`4`，则每个线程每次负责`1024/8/4=32`个单位。
 
-每个线程通过`CAS`修改`transferIndex`值来划分各自负责的区间。
+每个线程通过`CAS`操作尝试修改`transferIndex`，操作成功则各自负责所对应区间的迁移任务。
 
 ```java
 static final int NCPU = Runtime.getRuntime().availableProcessors();
 private static final int MIN_TRANSFER_STRIDE = 16;
+private transient volatile int transferIndex;
 
 private final void transfer(Node<K,V>[] tab, Node<K,V>[] nextTab) {
     int n = tab.length, stride;
-    // 如果 length/8/NCPU 小于16，则每段长度为默认16，针对原数组长度较小或可用CPU数量较少时的场景优化
+    // 如果 length / 8 / NCPU 小于16，则区间为默认值16个单位，主要针对原数组长度较小或可用CPU数量较少时的场景优化
     // 通过公式计算的目的是为了让每个CPU处理的长度保持一致
     if ((stride = (NCPU > 1) ? (n >>> 3) / NCPU : n) < MIN_TRANSFER_STRIDE)
         stride = MIN_TRANSFER_STRIDE; // subdivide range
-    // nextTab是扩容后的新数组，为null表示还未被初始化，需要初始化
+    // nextTab是扩容后的新数组，为null表示还未被初始化
     if (nextTab == null) {            // initiating
         try {
             // 实例化一个新数组，大小为原来的2倍
@@ -1022,7 +1050,7 @@ private final void transfer(Node<K,V>[] tab, Node<K,V>[] nextTab) {
         }
         // 赋值新数组，等待迁移数据
         nextTable = nextTab;
-        // 迁移索引，设置为原数组大小，每次
+        // 迁移索引，需要将原数组[0,n)的数据迁移至新数组[0,2n)
         transferIndex = n;
     }
     // 新数组长度

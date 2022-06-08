@@ -1092,25 +1092,31 @@ private final void transfer(Node<K,V>[] tab, Node<K,V>[] nextTab) {
             // 扩容已完成（由最后一个结束扩容的线程执行）
             if (finishing) {
                 nextTable = null; // 释放nextTable
-                table = nextTab;  // 替换table
+                table = nextTab;  // 替换为扩容后的table
                 sizeCtl = (n << 1) - (n >>> 1); // 更新扩容阈值
                 return;
             }
-            // 当前线程结束了协助扩容操作，sizeCtl低16位减1
+            // 当前线程结束了协助扩容操作，sizeCtl的低16位减1
             if (U.compareAndSwapInt(this, SIZECTL, sc = sizeCtl, sc - 1)) {
-                // 如果sizeCtl-2不等于标识符左移16位，说明还有线程在协助扩容，当前线程结束扩容操作
+                // 如果sizeCtl-2不等于标识符左移16位，说明还有线程在扩容，当前线程结束扩容操作
                 if ((sc - 2) != resizeStamp(n) << RESIZE_STAMP_SHIFT)
                     return;
-                // 如果sizeCtl-2等于标识符左移16位，说明没有线程在协助扩容，扩容结束
+                // 如果sizeCtl-2等于标识符左移16位，说明没有线程在扩容，扩容结束
                 finishing = advance = true;
                 i = n; // recheck before commit
             }
         }
+        // 如果原数组中第i个元素为null，则尝试使用fwd占位
         else if ((f = tabAt(tab, i)) == null)
+            // 通过CAS操作进行占位成功，继续推进下一个元素
             advance = casTabAt(tab, i, null, fwd);
+        // 如果原数组中第i个元素不为null，且hashCode为MOVED(-1)
         else if ((fh = f.hash) == MOVED)
+            // 说明已经被处理过了，继续推进下一个元素
             advance = true; // already processed
+        // 如果原数组中第i个元素不为null，且有具体的值（既不是占位符，也没有被处理过）
         else {
+            // 使用synchronized锁，防止putVal操作对链表修改
             synchronized (f) {
                 if (tabAt(tab, i) == f) {
                     Node<K,V> ln, hn;
@@ -1187,25 +1193,30 @@ private final void transfer(Node<K,V>[] tab, Node<K,V>[] nextTab) {
 ```
 
 ![java_concurrenthashmap_transfer](images/java_concurrenthashmap_transfer.png)
+![java_concurrenthashmap_transfer_linkedlist](images/java_concurrenthashmap_transfer_linkedlist.png)
+![java_concurrenthashmap_transfer_lastrun](images/java_concurrenthashmap_transfer_lastrun.png)
+![java_concurrenthashmap_transfer_redblacktree](images/java_concurrenthashmap_transfer_redblacktree.png)
+![java_concurrenthashmap_transfer_operation](images/java_concurrenthashmap_transfer_operation.png)
 
 ##### `get(Object key)`方法
 
 ```java
 public V get(Object key) {
     Node<K,V>[] tab; Node<K,V> e, p; int n, eh; K ek;
-    int h = spread(key.hashCode()); // 计算hashCode
+    int h = spread(key.hashCode());
+    // 如果table不为空，且hashCode对应位置的节点存在时
     if ((tab = table) != null && (n = tab.length) > 0 &&
-        (e = tabAt(tab, (n - 1) & h)) != null) { // table不为空且对应位置存在节点时
-        // 如果首节点hashCode和equals方法都相等，则直接返回该节点的value
+        (e = tabAt(tab, (n - 1) & h)) != null) { 
+        // 如果首节点hashCode和equals方法均相等，则直接返回该节点的value
         if ((eh = e.hash) == h) {
             if ((ek = e.key) == key || (ek != null && key.equals(ek)))
                 return e.val;
         }
-        // hashCode = -1，说明该节点是ForwardingNode，调用ForwardingNode的find方法在nextTable中搜索。
-        // hashCode = -2，说明该节点是TreeBin，调用TreeBin的find方法遍历红黑树，由于红黑树有可能正在旋转变色，所以find里会有读写锁。
+        // hashCode = -1，说明该节点是ForwardingNode，调用ForwardingNode的find方法，在nextTable中查找元素
+        // hashCode = -2，说明该节点是TreeBin，调用TreeBin的find方法遍历红黑树，由于红黑树有可能正在旋转变色，所以find里会有读写锁
         else if (eh < 0)
             return (p = e.find(h, key)) != null ? p.val : null;
-        // hashCode >= 0，说明该节点是链表，遍历链表直到找到改key。
+        // hashCode >= 0，说明该节点是链表，遍历链表查找元素
         while ((e = e.next) != null) {
             if (e.hash == h &&
                 ((ek = e.key) == key || (ek != null && key.equals(ek))))
@@ -1215,6 +1226,16 @@ public V get(Object key) {
     return null;
 }
 ```
+
+##### 扩容时`get`和`put`操作
+
+若`ConcurrentHashMap`正在扩容中，调用`get`和`put`方法会有以下几种场景：
+
+|                | `get`                                                           | `put`                                               |
+|:---------------|:----------------------------------------------------------------|:----------------------------------------------------|
+| `bucket`未被迁移   | 不会阻塞：在原来的`table`中进行`get`操作                                      | 不会阻塞：在原来的`table`中进行`put`操作                          |
+| `bucket`正在迁移   | 不会阻塞：迁移时会创建两个新的链表`ln`和`hn`，不会影响原来的`table`，在原来的`table`中进行`get`操作 | 可能阻塞：迁移时对链表的头部节点加了`synchronized`锁，而`putVal`时也需要获取该锁 |
+| `bucket`已经迁移完成 | 不会阻塞：`get`操作会去调用`ForwardingNode`的`find`方法，在`nextTable`中查找元素     | 会被阻塞：`put`操作会调用`helpTransfer`协助扩容，需要等扩容结束后才能继续操作    |
 
 #### 为什么不允许`null`值
 

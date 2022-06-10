@@ -782,38 +782,42 @@ public V get(Object key) {
 
 ##### `initTable()`方法
 
-若`table`未初始化时，调用以下方法会进行初始化：
+众所周知，`HashMap`实例化时，不会直接初始化`table`，而是调用在`put`、`compute`、`merge`等衍生方法时才会初始化，同理`ConcurrentHashMap`，所以要保证初始化操作线程安全。
+直接调用`initTable()`的方法如下：
 
-- `public V put(K key, V value)`
+- `final V putVal(K key, V value, boolean onlyIfAbsent)`
 - `public V computeIfAbsent(K key, Function<? super K, ? extends V> mappingFunction)`
 - `public V computeIfPresent(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction)`
 - `public V compute(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction)`
 - `public V merge(K key, V value, BiFunction<? super V, ? super V, ? extends V> remappingFunction)`
 
-通过自旋和`CAS`操作初始化`table`数组，若存在其他线程正在初始化，会通过自旋方式等待初始化完成：
-
 ```java
+// 使用 volatile 关键字修饰 table（需要注意，数组中元素并不具备可见性）
+transient volatile Node<K,V>[] table;
+
 private final Node<K,V>[] initTable() {
     Node<K,V>[] tab; int sc;
-    // 如果table还未初始化完成，则自旋
+    // 如果 table 还未初始化完成，则尝试进行初始化
+    // 如果 table 正在被其他线程初始化，则自旋等待
     while ((tab = table) == null || tab.length == 0) {
-        // sizeCtl < 0 表示正在初始化或扩容中，线程让步
+        // sizeCtl < 0 表示存在一个线程正在进行初始化（sizeCtl = -1 表示初始化中，sizeCtl < -1 表示扩容中，这里不太可能是扩容中）
         if ((sc = sizeCtl) < 0)
+            // 线程让步
             Thread.yield(); // lost initialization race; just spin
-        // 通过CAS操作修改sizeCtl的值为-1，修改成功表示成功获取锁，进行初始化操作
+        // 通过 CAS 操作修改 sizeCtl 的值为 -1，修改成功表示当前线程可以进行初始化
         else if (U.compareAndSwapInt(this, SIZECTL, sc, -1)) {
             try {
                 if ((tab = table) == null || tab.length == 0) {
-                    // 使用指定初始容量或默认初始容量
+                    // 使用指定初始容量或默认初始容量（16）
                     int n = (sc > 0) ? sc : DEFAULT_CAPACITY; 
                     @SuppressWarnings("unchecked")
                     Node<K,V>[] nt = (Node<K,V>[])new Node<?,?>[n];
                     table = tab = nt;
-                    // 计算扩容阈值，即当前容量3/4
+                    // 计算扩容阈值，即当前容量 3/4
                     sc = n - (n >>> 2);
                 }
             } finally {
-                // 将扩容阈值赋给sizeCtl
+                // 将扩容阈值赋给 sizeCtl
                 sizeCtl = sc; 
             }
             break;
@@ -822,6 +826,8 @@ private final Node<K,V>[] initTable() {
     return tab;
 }
 ```
+
+从源码中可以看出多个线程进入`initTable`方法时，只会有一个线程实例化`table`数组，其他线程会通过自旋方式等待。
 
 ##### `put(K key, V value)`方法
 

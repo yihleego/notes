@@ -9,18 +9,49 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0">
     <link href="favicon.png" rel="shortcut icon" type="image/x-icon">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/docsify/4.12.2/themes/vue.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/docsify-darklight-theme/3.2.0/style.min.css" rel="stylesheet">
+    <style>
+        .punctuation {
+            color: var(--codeTextColor) !important;
+        }
+    </style>
 </head>
 <body>
 <div id="app"></div>
 <script>
     window.$docsify = {
-        name: 'notes',
+        /*name: 'notes',*/
         repo: 'yihleego/notes',
         loadSidebar: "sidebar.md",
+        darklightTheme: {
+            defaultTheme: 'light',
+            siteFont: 'Source Sans Pro,Helvetica Neue,Arial,sans-serif',
+            codeFontFamily: 'Roboto Mono, Monaco, courier, monospace',
+            bodyFontSize: '15px',
+            dark: {
+                background: 'rgb(28,32,34)',
+                highlightColor: '#e96900',
+                codeBackgroundColor: 'rgb(34,39,46)',
+                codeTextColor: '#b4b4b4',
+            },
+            light: {
+                highlightColor: '#e96900',
+            }
+        },
+        search: {
+            maxAge: 1800000,
+            depth: 5,
+        },
     }
 </script>
-<!-- Docsify v4 -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/docsify/4.12.2/docsify.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/docsify/4.12.2/plugins/front-matter.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/docsify/4.12.2/plugins/search.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/docsify-darklight-theme/3.2.0/index.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/docsify-copy-code/2.1.1/docsify-copy-code.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.28.0/themes/prism-dark.min.css"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.28.0/components/prism-java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.28.0/components/prism-javadoc.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.28.0/components/prism-go.min.js"></script>
 </body>
 </html>

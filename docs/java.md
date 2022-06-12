@@ -950,45 +950,40 @@ private final void addCount(long x, int check) {
             return;
         s = sumCount();
     }
-    // 传入的check值大于等于 0 时，判断是否需要扩容
+    // 传入的 check 值大于等于 0 时，判断是否需要扩容
     if (check >= 0) {
         Node<K,V>[] tab, nt; int n, sc;
-        // 如果当前size >= sizeCtl时（即已经达到了扩容阈值）
+        // 如果当前 size >= sizeCtl 时，说明已经达到了扩容阈值
         while (s >= (long)(sc = sizeCtl) && (tab = table) != null &&
                (n = tab.length) < MAXIMUM_CAPACITY) {
-            // 根据当前table的length得到一个标识符，例如长度为16时，标识符二进制为：1000000000011011
+            // 根据当前 table 的长度获取标识符
             int rs = resizeStamp(n);
-            // 判断是否正在扩容，sizeCtl < 0表示正在扩容
+            // 如果 sizeCtl < 0，说明扩容正在进行
+            // 此时 sizeCtl 值是由 rs 和正在扩容线程数量组成的一个负数
+            // 例如：当前 table 长度为 16，标识符二进制为 1000000000011011，正在扩容的线程池数量为 1，则 sizeCtl 为 1000000000011011_0000000000000010
             if (sc < 0) {
-                if ((sc >>> RESIZE_STAMP_SHIFT) != rs // 如果sizeCtl无符号右移16位不等于rs，说明标识符发生了变化
-                    || sc == rs + 1                   // 如果sizeCtl等于rs + 1，说明扩容已经结束
-                    || sc == rs + MAX_RESIZERS        // 如果sizeCtl等于rs + 65535，说明达到最大帮助线程的数量
-                    || (nt = nextTable) == null       // 如果nextTable为空说明扩容已经结束，nextTable是扩容后的新数组，只有在扩容时才会存在
-                    || transferIndex <= 0)            // 如果transferIndex小于等于0，说明数据迁移容的任务已经分配完或扩容已经结束
-                    break;                            // 结束循环
-                // 如果满足条件，则通过CAS操作对sizeCtl加1，表示增加一个线程协助扩容
+                // 满足以下任意条件时，不需要协助扩容，结束循环
+                if ((sc >>> RESIZE_STAMP_SHIFT) != rs // 如果 sizeCtl 高 16 位不等于 rs 说明标识符发生了变化
+                    || sc == rs + 1                   // 如果 sizeCtl 等于 rs + 1 说明扩容已经结束
+                    || sc == rs + MAX_RESIZERS        // 如果 sizeCtl 等于 rs + 65535 说明达到最大帮助线程的数量
+                    || (nt = nextTable) == null       // 如果 nextTable 为空说明扩容已经结束，nextTable是扩容后的新数组，只有在扩容时才会存在
+                    || transferIndex <= 0)            // 如果 transferIndex <= 0 说明数据迁移容的任务已经分配完或扩容已经结束
+                    break;
+                // 如果满足协助扩容的前提条件，则通过 CAS 操作对 sizeCtl 加 1，表示增加一个线程协助扩容
                 if (U.compareAndSwapInt(this, SIZECTL, sc, sc + 1))
-                    // 当前线程尝试扩容和迁移数据
+                    // 当前线程尝试扩容
                     transfer(tab, nt);
             }
             // 不存在其他线程正在扩容，标识符左移16位并加2，此时值为负数，高16位为标识符，低16位为2，可视作-2，表示有1个线程正在扩容和迁移数据
             // 例如table长度为16时，标识符二进制为：1000000000011011，设置sizeCtl为：1000000000011011_0000000000000010
             else if (U.compareAndSwapInt(this, SIZECTL, sc, (rs << RESIZE_STAMP_SHIFT) + 2)) 
-                // 当前线程尝试扩容和迁移数据
+                // 当前线程尝试扩容
                 transfer(tab, null);
             s = sumCount();
         }
     }
 }
 ```
-
-补充，满足以下条件时，会对`counterCells`进行扩容：
-
-- `counterCells`不为空，即已完成初始化
-- `hashCode`对应的`counterCells`下标元素不为`null`
-- 通过`CAS`操作修改`counterCells`指定下标位置中对象的值失败，说明存在线程竞争
-- `counterCells`数组长度小于可用CPU数量
-- 没有其他线程创建了新的`counterCells`
 
 ##### `helpTransfer(Node<K,V>[] tab, Node<K,V> f)`方法 协助扩容
 
@@ -1020,13 +1015,14 @@ final Node<K,V>[] helpTransfer(Node<K,V>[] tab, Node<K,V> f) {
         // 例如：当前 table 长度为 16，标识符二进制为 1000000000011011，正在扩容的线程池数量为 1，则 sizeCtl 为 1000000000011011_0000000000000010
         while (nextTab == nextTable && table == tab && (sc = sizeCtl) < 0) {
             // 满足以下任意条件时，不需要协助扩容，结束循环
-            if ((sc >>> RESIZE_STAMP_SHIFT) != rs  // 如果 sizeCtl 高 16 位不等于 rs 说明标识符发生了变化
-                || sc == rs + 1                    // 如果 sizeCtl 等于 rs + 1 说明扩容已经结束
-                || sc == rs + MAX_RESIZERS         // 如果 sizeCtl 等于 rs + 65535 说明达到最大帮助线程的数量
-                || transferIndex <= 0)             // 如果 transferIndex <= 0 说明数据迁移容的任务已经分配完或扩容已经结束
+            if ((sc >>> RESIZE_STAMP_SHIFT) != rs // 如果 sizeCtl 高 16 位不等于 rs 说明标识符发生了变化
+                || sc == rs + 1                   // 如果 sizeCtl 等于 rs + 1 说明扩容已经结束
+                || sc == rs + MAX_RESIZERS        // 如果 sizeCtl 等于 rs + 65535 说明达到最大帮助线程的数量
+                || transferIndex <= 0)            // 如果 transferIndex <= 0 说明数据迁移容的任务已经分配完或扩容已经结束
                 break;
             // 如果满足协助扩容的前提条件，则通过 CAS 操作对 sizeCtl 加 1，表示增加一个线程协助扩容
             if (U.compareAndSwapInt(this, SIZECTL, sc, sc + 1)) {
+                // 当前线程尝试扩容
                 transfer(tab, nextTab);
                 break;
             }
@@ -1040,30 +1036,34 @@ final Node<K,V>[] helpTransfer(Node<K,V>[] tab, Node<K,V> f) {
 ##### `transfer(Node<K,V>[] tab, Node<K,V>[] nextTab)`方法 并发扩容
 
 `ConcurrentHashMap`采用的是分段扩容法，即每个线程每次负责迁移一部分数据，每次迁移数据数量`stride`默认最小是`16`，其计算公式为`当前数组长度 / 8 / 可用CPU数量`，
-例如当前数组长度为`1024`，CPU数量为`4`，则每个线程每次负责`1024/8/4=32`个单位。
+例如当前`table`长度为`1024`，CPU数量为`4`，则每个线程每次负责`1024/8/4=32`个单位。
+
+`transferIndex`属性表示`table`上待迁移的位置，由右往左推进，例如：当前`transferIndex`值为`32`，`stride`值为`16`，则下一个线程负责区间为`[16,32)`，下下一个线程负责`[0,15)`。
 
 每个线程通过`CAS`操作尝试修改`transferIndex`，操作成功则各自负责所对应区间的迁移任务。
 
 ```java
+// 可用CPU数量
 static final int NCPU = Runtime.getRuntime().availableProcessors();
+// 最小迁移步长
 private static final int MIN_TRANSFER_STRIDE = 16;
+// 迁移位置
 private transient volatile int transferIndex;
 
 private final void transfer(Node<K,V>[] tab, Node<K,V>[] nextTab) {
     int n = tab.length, stride;
-    // 如果 length / 8 / NCPU 小于16，则区间为默认值16个单位，主要针对原数组长度较小或可用CPU数量较少时的场景优化
-    // 通过公式计算的目的是为了让每个CPU处理的长度保持一致
+    // 如果 length / 8 / NCPU 小于 16，则步长为默认值 16 个单位，主要针对原数组长度较小或可用CPU数量较少时的场景优化
     if ((stride = (NCPU > 1) ? (n >>> 3) / NCPU : n) < MIN_TRANSFER_STRIDE)
         stride = MIN_TRANSFER_STRIDE; // subdivide range
-    // nextTab是扩容后的新数组，为null表示还未被初始化
+    // nextTab 是扩容后的新数组，为 null 表示还未被初始化
     if (nextTab == null) {            // initiating
         try {
-            // 实例化一个新数组，大小为原来的2倍
+            // 实例化一个新数组，大小为原来的 2 倍
             @SuppressWarnings("unchecked")
             Node<K,V>[] nt = (Node<K,V>[])new Node<?,?>[n << 1];
             nextTab = nt;
         } catch (Throwable ex) {      // try to cope with OOME
-            // 扩容失败则将sizeCtl设置为最大值，表示之后不再触发扩容
+            // 扩容失败则将 sizeCtl 设置为最大值，表示之后不再触发扩容
             sizeCtl = Integer.MAX_VALUE;
             return;
         }
@@ -1074,28 +1074,27 @@ private final void transfer(Node<K,V>[] tab, Node<K,V>[] nextTab) {
     }
     // 新数组长度
     int nextn = nextTab.length;
-    // 创建一个ForwardingNode表示正在迁移的节点，其hashCode值为MOVED（-1）
+    // 创建一个 ForwardingNode 表示正在迁移的节点，其 hash 值为 MOVED（-1）
     ForwardingNode<K,V> fwd = new ForwardingNode<K,V>(nextTab);
-    // 推进状态，如果为true则表示需要继续修改transferIndex迁移数据
+    // 推进状态，如果为 true 则表示需要继续修改 transferIndex 迁移数据
     boolean advance = true;
-    // 完成状态，如果为true则表示已经完成扩容，中断循环并返回
+    // 完成状态，如果为 true 则表示已经完成扩容，中断循环并返回
     boolean finishing = false; // to ensure sweep before committing nextTab
-    // 循环处理，i表示当前bucket的下标，bound表示当前线程下标的边界（最小下标）
+    // 循环处理，i 表示当前 bucket 的下标，bound 表示当前线程负责区间的边界
     for (int i = 0, bound = 0;;) {
         Node<K,V> f; int fh;
         // 如果当前线程可以继续推进，每个线程进入循环都会获取自己负责的区间
         while (advance) {
             int nextIndex, nextBound;
-            // i递减，如果大于等于bound（区间未处理完）或者已完成，修改推进状态为false
+            // i 递减，如果大于等于 bound （区间未处理完）或者已完成，修改推进状态为 false
             if (--i >= bound || finishing)
                 advance = false;
-            // 如果小于等于0，表示没有区间需要处理，i设置为-1，推进状态设置为false，结束当前线程扩容操作
+            // 如果 transferIndex 小于等于 0，表示没有区间需要处理，i 设置为 -1，推进状态设置为 false，结束当前线程扩容操作
             else if ((nextIndex = transferIndex) <= 0) {
                 i = -1;
                 advance = false;
             }
-            // 通过CAS修改transferIndex，为当前线程分配需要迁移的区间，区间为：[nextBound, nextIndex)
-            // 剩余的区间留给后面的线程使用
+            // 通过 CAS 操作修改 transferIndex，为当前线程分配需要迁移的区间，区间为：[nextBound, nextIndex)
             else if (U.compareAndSwapInt
                      (this, TRANSFERINDEX, nextIndex,
                       nextBound = (nextIndex > stride ?
@@ -1115,12 +1114,12 @@ private final void transfer(Node<K,V>[] tab, Node<K,V>[] nextTab) {
                 sizeCtl = (n << 1) - (n >>> 1); // 更新扩容阈值
                 return;
             }
-            // 当前线程结束了协助扩容操作，sizeCtl的低16位减1
+            // 当前线程结束了协助扩容操作，sizeCtl（低16位）减 1
             if (U.compareAndSwapInt(this, SIZECTL, sc = sizeCtl, sc - 1)) {
                 // 如果sizeCtl-2不等于标识符左移16位，说明还有线程在扩容，当前线程结束扩容操作
                 if ((sc - 2) != resizeStamp(n) << RESIZE_STAMP_SHIFT)
                     return;
-                // 如果sizeCtl-2等于标识符左移16位，说明没有线程在扩容，扩容结束
+                // 如果 sizeCtl - 2 的低16位等于 0，说明没有线程在扩容，扩容结束
                 finishing = advance = true;
                 i = n; // recheck before commit
             }

@@ -201,7 +201,7 @@ Redis 列表是简单的字符串列表，按插入顺序排序，可以将新�
 
 ![ziplist](images/redis_ziplist.jpg)
 
-#### quicklist 快速列表 
+#### quicklist 快速列表
 
 源码：[quicklist.h](https://github.com/redis/redis/blob/7.0/src/quicklist.h#L105)
 

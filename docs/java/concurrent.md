@@ -364,7 +364,7 @@ final V putVal(K key, V value, boolean onlyIfAbsent) {
     // 如果是链表，则代表长度，长度超过 TREEIFY_THRESHOLD（8）会转化为红黑树
     // 如果是红黑树，则固定为2，目的是为了 addCount 方法检测是否需要扩容
     int binCount = 0;
-    // 无限循环直到元素被成功写入
+    // 自旋直到元素被成功写入
     for (Node<K,V>[] tab = table;;) {
         Node<K,V> f; int n, i, fh;
         // 如果 table 为空则进行初始化

@@ -375,7 +375,7 @@ final V putVal(K key, V value, boolean onlyIfAbsent) {
             if (casTabAt(tab, i, null, new Node<K,V>(hash, key, value, null)))
                 break; // no lock when adding to empty bin
         }
-        // 通过 hashCode 计算 table 下标，如果节点存在且 hash 值为 MOVED（-1），说明该节点为 ForwardingNode 类的对象，即当前正在扩容，调用 helpTransfer 方法尝试协助扩容
+        // 通过 hashCode 计算 table 下标，如果节点存在且 hash 值为 MOVED（-1），说明当前节点正在扩容，调用 helpTransfer 方法尝试协助扩容
         // 节点 hash 值为 MOVED（-1），则说明该节点对象的类一定为 ForwardingNode，也说明该节点所在区间正在扩容
         else if ((fh = f.hash) == MOVED)
             tab = helpTransfer(tab, f);
@@ -556,7 +556,7 @@ final Node<K,V>[] helpTransfer(Node<K,V>[] tab, Node<K,V> f) {
 
 #### `transfer(Node<K,V>[] tab, Node<K,V>[] nextTab)`方法 并发扩容
 
-`ConcurrentHashMap`采用的是分段扩容法，即每个线程每次负责迁移一部分数据，每次迁移数据数量`stride`默认最小是`16`，其计算公式为`当前数组长度 / 8 / 可用CPU数量`，
+`ConcurrentHashMap`采用的是分段扩容法，每个线程每次负责迁移一部分数据，每次迁移数据数量`stride`默认最小是`16`，其计算公式为`当前数组长度 / 8 / 可用CPU数量`，
 例如当前`table`长度为`1024`，CPU数量为`4`，则每个线程每次负责`1024/8/4=32`个单位。
 
 `transferIndex`属性表示`table`上待迁移的位置，由右往左推进，例如：当前`transferIndex`值为`32`，`stride`值为`16`，则下一个线程负责区间为`[16,32)`，下下一个线程负责`[0,15)`。
@@ -786,4 +786,76 @@ public V get(Object key) {
 
 ## CopyOnWriteArrayList
 
+`CopyOnWriteArrayList`基本的结构，`lock`属性是一个可重入锁，`array`属性存放元素，并且访问都通过`getArray()`和`setArray()`方法。
+
+```java
+public class CopyOnWriteArrayList<E>
+    implements List<E>, RandomAccess, Cloneable, java.io.Serializable {
+    private static final long serialVersionUID = 8673264195747942595L;
+
+    /** The lock protecting all mutators */
+    final transient ReentrantLock lock = new ReentrantLock();
+
+    /** The array, accessed only via getArray/setArray. */
+    private transient volatile Object[] array;
+
+    /**
+     * Gets the array.  Non-private so as to also be accessible
+     * from CopyOnWriteArraySet class.
+     */
+    final Object[] getArray() {
+        return array;
+    }
+
+    /**
+     * Sets the array.
+     */
+    final void setArray(Object[] a) {
+        array = a;
+    }
+}
+```
+
+### `add(E e)`方法
+
+新增元素时先调用`lock.lock()`获取锁，成功获取锁后，复制一个新数组，将新增元素写到新数组上，然后调用`setArray()`方法覆盖`array`，最后调用`lock.unlock()`解锁。
+
+```java
+public boolean add(E e) {
+    final ReentrantLock lock = this.lock;
+    lock.lock();
+    try {
+        Object[] elements = getArray();
+        int len = elements.length;
+        Object[] newElements = Arrays.copyOf(elements, len + 1);
+        newElements[len] = e;
+        setArray(newElements);
+        return true;
+    } finally {
+        lock.unlock();
+    }
+}
+```
+
+### `get(int index)`方法
+
+直接从原数组中获取元素。
+
+```java
+private E get(Object[] a, int index) {
+    return (E) a[index];
+}
+
+public E get(int index) {
+    return get(getArray(), index);
+}
+```
+
+### 总结
+
+从源码中我们可以得出`CopyOnWriteArrayList`写数据的时候会加锁，并且会复制一份数组；读数据的时候不会加锁，不会复制数组。
+于是`CopyOnWriteArrayList`的缺点就非常明显了，如果经常写数据就会复制很多数组，对`GC`造成压力。
+
 ## CopyOnWriteArraySet
+
+同上

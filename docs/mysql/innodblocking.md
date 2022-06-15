@@ -145,3 +145,32 @@ insert into test(v) values(12); # 区间外 预测：non-blocking 实际：non-b
 ## 空间索引谓词锁
 
 TODO
+
+## 测试题
+
+假设存在如下表：
+
+```mysql
+create table test
+(
+    id bigint primary key auto_increment,
+    k  int,
+    v  int,
+    constraint uk_k unique (k)
+);
+```
+
+|     |                Session 1                |                Session 2                |                Session 3                | 
+|:---:|:---------------------------------------:|:---------------------------------------:|:---------------------------------------:|
+|  1  | `insert into test (k, v) values (1, 1)` |                                         |                                         |
+|  2  |                                         | `insert into test (k, v) values (1, 1)` |                                         | 
+|  3  |                                         |                                         | `insert into test (k, v) values (1, 1)` | 
+|  4  |                rollback                 |                                         |                                         |  
+|  5  |                                         |                                         |                deadlock                 |  
+|  6  |                                         |                 commit                  |                                         |  
+
+为什么 Session 1 回滚会导致 Session 3 死锁，而 Session 2 可以插入成功呢？
+
+原因是 Session 1 插入成功后未提交事务，此时持有排它锁（X）， Session 2 和 Session 3 需要排队获取共享锁（S）检查唯一索引。
+Session 1 插入成功后 rollback ，于是 Session 2 和 Session 3 同时获得了共享锁（S），发现不存在冲突的唯一索引，所以它们此时都想升级排它锁（X），
+于是双方都在等对方释放共享锁（S）而发生死锁，最后只能 abort 其中一个，而另一个成功升级排它锁（X）之后插入成功。

@@ -76,7 +76,7 @@ InnoDB 中的间隙锁是“纯粹的抑制性”，这意味着它们的唯一�
 
 假设存在以下表及数据：
 
-```mysql
+```sql
 create table `test`
 (
     `id` int primary key auto_increment,
@@ -110,14 +110,14 @@ create table `test`
 
 当我们开启事务`T1`执行以下`SQL`时，保持事务不提交，会锁住`(5, 8]`和`(8, 11]`区间。
 
-```mysql
+```sql
 start transaction;
 select * from test where v = 8 for update;
 ```
 
 所以我们可以预测在新的事务`T2`中分别执行以下`SQL`的结果：
 
-```mysql
+```sql
 insert into test(v) values(1);  # 区间外 预测：non-blocking 实际：non-blocking 符合预期
 insert into test(v) values(4);  # 区间外 预测：non-blocking 实际：non-blocking 符合预期
 insert into test(v) values(5);  # 区间外 预测：non-blocking 实际：blocking     不符合预期
@@ -150,7 +150,7 @@ TODO
 
 假设存在如下表：
 
-```mysql
+```sql
 create table test
 (
     id bigint primary key auto_increment,

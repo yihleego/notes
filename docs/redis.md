@@ -13,7 +13,7 @@
 
 [server.h#redisObject](https://github.com/redis/redis/blob/7.0/src/server.h#L845)
 
-```
+```c
 typedef struct redisObject {
     unsigned type:4;
     unsigned encoding:4;
@@ -127,7 +127,7 @@ Redis 为`type`是`embstr`的 redisObject 分配内存时，会申请64个字节
 
 _额外减`1`是因为字符串结束符`\0`占1个字节。_
 
-```
+```c
 typedef struct redisObject {
     unsigned type:4;      // 0.5 字节
     unsigned encoding:4;  // 0.5 字节
@@ -217,7 +217,7 @@ Redis 默认配置的每个`ziplist`的大小为`8Kb`，超过这个大小时会
 
 [redis.conf#list-max-listpack-size](https://github.com/redis/redis/blob/7.0/redis.conf#L1929)
 
-```conf
+```bash
 # Lists are also encoded in a special way to save a lot of space.
 # The number of entries allowed per internal list node can be specified
 # as a fixed maximum size or a maximum number of elements.
@@ -248,7 +248,7 @@ list-max-listpack-size -2
 
 [redis.conf#list-compress-depth](https://github.com/redis/redis/blob/7.0/redis.conf#L1945)
 
-```conf
+```bash
 # Lists may also be compressed.
 # Compress depth is the number of quicklist ziplist nodes from *each* side of
 # the list to *exclude* from compression.  The head and tail of the list

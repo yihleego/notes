@@ -2,7 +2,7 @@
 
 ## ClassLoader
 
-JVM 中内置了三个重要的 ClassLoader，除了 BootstrapClassLoader 其他类加载器均由 Java 实现且全部继承自java.lang.ClassLoader：
+众所周知，运行 Java 程序需要先把`.java`文件编译成`.class`文件，然后通过 JVM 加载字节码文件到内存运行，而`Classloader`所做的事情就是将`.class`文件加载到 JVM 中。
 
 ### BootstrapClassLoader
 
@@ -19,7 +19,7 @@ JVM 中内置了三个重要的 ClassLoader，除了 BootstrapClassLoader 其他
 
 系统类加载器，又称应用程序类加载器，它负责在 JVM 启动时加载`classpath`，或者`java.class.path`系统属性，或者操作系统`CLASSPATH`属性所指定的jar包和类路径。
 
-调用`ClassLoader.getSystemClassLoader()`可以获取该类加载器（`SystemClassLoader`即`AppClassloader`）。
+调用`ClassLoader.getSystemClassLoader()`可以获取该类加载器，这里的`SystemClassLoader`即`AppClassloader`。
 如果没有特别指定，则用户自定义的任何类加载器都将`AppClassloader`作为父加载器，这点通过`ClassLoader`类的无参构造函数可以知道如下：
 
 ```java
@@ -62,14 +62,16 @@ Java 类加载器使用的是双亲委托机制，也就是子类加载器在加
 ```java
 protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
     synchronized (getClassLoadingLock(name)) {
-        // First, check if the class has already been loaded
+        // 判断类是否已被加载，如果已加载则直接返回
         Class<?> c = findLoadedClass(name);
         if (c == null) {
             long t0 = System.nanoTime();
             try {
                 if (parent != null) {
+                    // 委托父加载器进行加载类
                     c = parent.loadClass(name, false);
                 } else {
+                    // 委托引导类加载器进行加载类
                     c = findBootstrapClassOrNull(name);
                 }
             } catch (ClassNotFoundException e) {
@@ -78,8 +80,8 @@ protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundE
             }
 
             if (c == null) {
-                // If still not found, then invoke findClass in order
-                // to find the class.
+                // 如果依然没找到则调用 findClass 方法加载类
+                // ClassLoader 类的 findClass 方法默认未实现加载功能，会抛出 ClassNotFoundException 异常，这时候会把加载任务下沉给子加载器执行
                 long t1 = System.nanoTime();
                 c = findClass(name);
 
@@ -95,7 +97,15 @@ protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundE
         return c;
     }
 }
+
+protected Class<?> findClass(String name) throws ClassNotFoundException {
+    // 默认直接抛出 ClassNotFoundException 异常
+    throw new ClassNotFoundException(name);
+}
 ```
+
+_双亲委派是翻译问题，不是指有两个加载器。_
+
 
 ## 逃逸分析
 

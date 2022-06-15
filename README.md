@@ -22,7 +22,7 @@
     - [MySQL](docs/mysql.md)
         - [索引结构](docs/mysql/index.md)
         - [InnoDB Locking](docs/mysql/innodblocking.md)
-        - [InnoDB Locking](docs/mysql/metadatalocking.md)
+        - [Metadata Locking](docs/mysql/metadatalocking.md)
         - [事务基本特性和隔离级别](docs/mysql/transaction.md)
         - [InnoDB和MyISAM的区别](docs/mysql/myisam.md)
         - [分库分表](docs/mysql/sharding.md)

@@ -46,7 +46,8 @@ protected ClassLoader() {
 用户自定义的无参加载器的父类加载器默认是`AppClassloader`，而`AppClassloader`的父加载器是`ExtClassloader`，通过下面代码可以验证：
 
 ```java
-ClassLoader.getSystemClassLoader().getParent()
+// Launcher$ExtClassLoader
+ClassLoader.getSystemClassLoader().getParent();
 ```
 
 一般我们都认为`ExtClassloader`的父类加载器是`BootstrapClassLoader`，但是其实他们之间根本是没有父子关系的，只是在`ExtClassloader`找不到要加载类时候会去委托`BootstrapClassLoader`去加载。
@@ -81,7 +82,7 @@ protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundE
 
             if (c == null) {
                 // 如果依然没找到则调用 findClass 方法加载类
-                // ClassLoader 类的 findClass 方法默认未实现加载功能，会抛出 ClassNotFoundException 异常，这时候会把加载任务下沉给子加载器执行
+                // 自定义 ClassLoader 类需要重写 findClass 方法，否则会抛出 ClassNotFoundException 异常把加载任务下沉到子加载器去执行
                 long t1 = System.nanoTime();
                 c = findClass(name);
 
@@ -99,13 +100,12 @@ protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundE
 }
 
 protected Class<?> findClass(String name) throws ClassNotFoundException {
-    // 默认直接抛出 ClassNotFoundException 异常
+    // 抛出 ClassNotFoundException 异常
     throw new ClassNotFoundException(name);
 }
 ```
 
 _双亲委派是翻译问题，不是指有两个加载器。_
-
 
 ## 逃逸分析
 

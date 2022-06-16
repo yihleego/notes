@@ -160,14 +160,14 @@ create table test
 );
 ```
 
-|     |                Session 1                |                Session 2                |                Session 3                | 
-|:---:|:---------------------------------------:|:---------------------------------------:|:---------------------------------------:|
-|  1  | `insert into test (k, v) values (1, 1)` |                                         |                                         |
-|  2  |                                         | `insert into test (k, v) values (1, 1)` |                                         | 
-|  3  |                                         |                                         | `insert into test (k, v) values (1, 1)` | 
-|  4  |                rollback                 |                                         |                                         |  
-|  5  |                                         |                                         |                deadlock                 |  
-|  6  |                                         |                 commit                  |                                         |  
+|     |               Session 1               |               Session 2               |               Session 3               | 
+|:---:|:-------------------------------------:|:-------------------------------------:|:-------------------------------------:|
+|  1  | insert into test (k, v) values (1, 1) |                                       |                                       |
+|  2  |                                       | insert into test (k, v) values (1, 1) |                                       | 
+|  3  |                                       |                                       | insert into test (k, v) values (1, 1) | 
+|  4  |               rollback                |                                       |                                       |  
+|  5  |                                       |                                       |               deadlock                |  
+|  6  |                                       |                commit                 |                                       |  
 
 为什么 Session 1 回滚会导致 Session 3 死锁，而 Session 2 可以插入成功呢？
 

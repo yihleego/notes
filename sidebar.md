@@ -27,6 +27,7 @@
         - [读写分离](docs/mysql/readwritesplitting.md)
     - [Redis ⛅](docs/redis.md)
     - [MongoDB 🌧️](docs/mongodb.md)
+    - [TiDB 🌧️](docs/tidb.md)
 - Middleware
     - [Kafka 🌧️](docs/kafka.md)
     - [Elasticsearch 🌧️](docs/elasticsearch.md)
@@ -37,4 +38,6 @@
 - Others
     - [Algorithm 🌧️](docs/algorithm.md)
     - [Business 🌧️](docs/business.md)
+    - [Docker 🌧️](docs/docker.md)
+    - [Kubernetes 🌧️](docs/kubernetes.md)
     - [Testing 🌧️](docs/testing.md)

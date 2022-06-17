@@ -4,7 +4,7 @@
 
 `AbstractQueuedSynchronizer`（简称`AQS`）定义了一套多线程访问共享资源的同步模板，是实现同步器的基础组件，例如`ReentrantLock`、`Semaphore`、`CountDownLatch`等均是基于`AQS`实现的。
 
-![java_aqs_process](../images/java_aqs_process.jpg)
+![java_aqs_process](images/java_aqs_process.jpg)
 
 ### 主要属性
 
@@ -12,7 +12,7 @@
 - `volatile Node head`和`volatile Node tail`组成`CLH`队列
 - `class ConditionObject`条件变量，包含`Node`组成的条件单向队列
 
-![java_aqs_properties](../images/java_aqs_properties.jpg)
+![java_aqs_properties](images/java_aqs_properties.jpg)
 
 ### 主要方法
 
@@ -186,7 +186,7 @@ _TODO_
 在`Java 7`及之前的版本中，采用了分段锁方案，`Segment`继承于`ReentrantLock`，当一个线程访问一个`Segment`时，不会影响到其他的`Segment`，
 换而言之，如果有一个`ConcurrentHashMap`的`segments`大小为`16`时，可以允许`16`个线程同时操作`16`个`Segment`，既线程安全，又不会发生竞争。
 
-![java_concurrenthashmap_segments.png](../images/java_concurrenthashmap_segments.png)
+![java_concurrenthashmap_segments.png](images/java_concurrenthashmap_segments.png)
 
 #### `put(K key, V value)`方法
 
@@ -731,11 +731,11 @@ private final void transfer(Node<K,V>[] tab, Node<K,V>[] nextTab) {
 }
 ```
 
-![java_concurrenthashmap_transfer](../images/java_concurrenthashmap_transfer.png)
-![java_concurrenthashmap_transfer_linkedlist](../images/java_concurrenthashmap_transfer_linkedlist.png)
-![java_concurrenthashmap_transfer_lastrun](../images/java_concurrenthashmap_transfer_lastrun.png)
-![java_concurrenthashmap_transfer_redblacktree](../images/java_concurrenthashmap_transfer_redblacktree.png)
-![java_concurrenthashmap_transfer_operation](../images/java_concurrenthashmap_transfer_operation.png)
+![java_concurrenthashmap_transfer](images/java_concurrenthashmap_transfer.png)
+![java_concurrenthashmap_transfer_linkedlist](images/java_concurrenthashmap_transfer_linkedlist.png)
+![java_concurrenthashmap_transfer_lastrun](images/java_concurrenthashmap_transfer_lastrun.png)
+![java_concurrenthashmap_transfer_redblacktree](images/java_concurrenthashmap_transfer_redblacktree.png)
+![java_concurrenthashmap_transfer_operation](images/java_concurrenthashmap_transfer_operation.png)
 
 #### `get(Object key)`方法
 

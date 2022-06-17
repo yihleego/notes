@@ -111,7 +111,7 @@ final V putVal(int hash, K key, V value, boolean onlyIfAbsent,
 }
 ```
 
-![put](../images/java_hashmap_put.png)
+![put](images/java_hashmap_put.png)
 
 ### `hash(Object key)`方法
 
@@ -125,11 +125,11 @@ static final int hash(Object key) {
 }
 ```
 
-![put](../images/java_hashmap_hash.png)
+![put](images/java_hashmap_hash.png)
 
 ### `resize()`方法
 
-![resize](../images/java_hashmap_resize.png)
+![resize](images/java_hashmap_resize.png)
 
 只需要判断`hash`值的新高位是`0`还是`1`即可确定新索引，即`0`表示索引不变，`1`表示需要移动位置（新索引为原索引加原容量）。
 
@@ -170,7 +170,7 @@ _在并发场景中，应该使用线程安全的`ConcurrentHashMap`_
 - 每个红色节点必须有两个黑色的子节点。（或者说从每个叶子到根的所有路径上不能有两个连续的红色节点；或者说不存在两个相邻的红色节点，相邻指两个节点是父子关系；或者说红色节点的父节点和子节点均是黑色的。）
 - 从任一节点到其每个叶子的所有简单路径都包含相同数目的黑色节点。
 
-![redblacktree](../images/java_treemap_redblacktree.png)
+![redblacktree](images/java_treemap_redblacktree.png)
 
 ### 对比 AVL tree (Adelson-Velsky and Landis Tree)
 

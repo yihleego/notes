@@ -130,7 +130,7 @@ insert into test(v) values(12); # 区间外 预测：non-blocking 实际：non-b
 
 是由于 InnoDB 的叶子节点都是按顺序的插入的，并且`id`为自增主键，因此我们插入值为`5`的记录时，会将数据追加到原来值为`5`数据的后面，于是就落到了`T1`事务临键锁涵盖的区间内。同理可知插入值为`11`的记录时，实际的叶子节点在区间外。
 
-![mysql_nextkeylocks_btree](../images/mysql_nextkeylocks_btree.png)
+![mysql_nextkeylocks_btree](images/mysql_nextkeylocks_btree.png)
 
 ## 插入意向锁
 

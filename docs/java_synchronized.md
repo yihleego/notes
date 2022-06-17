@@ -58,7 +58,7 @@ public synchronized void foo() {
 
 ### Mark Word
 
-![markword_64bit](../images/java_jvm_markword_64bit.png)
+![markword_64bit](images/java_jvm_markword_64bit.png)
 
 ### 1. 无锁
 
@@ -85,7 +85,7 @@ public synchronized void foo() {
 偏向锁的目的是假定`monitor`一直由某个特定线程持有，直到另一个线程尝试获取它，这样就可以避免获取`monitor`时执行`CAS`的原子操作。
 `monitor`首次锁定时偏向该线程，这样就可以避免同一对象的后续同步操作步骤需要原子指令。
 
-![java_synchronized_biased_locking](../images/java_synchronized_biased_locking.png)
+![java_synchronized_biased_locking](images/java_synchronized_biased_locking.png)
 
 从历史上看，偏向锁使得 JVM 的性能得到了显著改善。
 
@@ -119,13 +119,13 @@ public synchronized void foo() {
 轻量级锁对少量线程竞争同一个资源并且他们的操作时间比较短的场景性能较好，没有竞争到锁的线程会轮询固定的次数来获取轻量级锁，不会阻塞线程。
 因为阻塞线程需要`CPU`从用户态转到内核态，其代价较大。
 
-![java_synchronized_lightweight_locking](../images/java_synchronized_lightweight_locking.png)
+![java_synchronized_lightweight_locking](images/java_synchronized_lightweight_locking.png)
 
 ### 4. 重量级锁
 
 当一个轻量级锁自旋超过一定次数（默认10次），或被两个及以上的线程竞争的时候，轻量级锁就会膨胀为重量级锁。
 
-![java_synchronized_heavyweight_locking](../images/java_synchronized_heavyweight_locking.png)
+![java_synchronized_heavyweight_locking](images/java_synchronized_heavyweight_locking.png)
 
 ## synchronized 锁粗化
 

@@ -77,11 +77,11 @@ public ThreadPoolExecutor(int corePoolSize,
 2. 阻塞队列已满
 3. 正在运行的线程数量小于最大线程数
 
-![process](../images/java_thread_threadpoolexecutor_flow.png)
+![process](images/java_thread_threadpoolexecutor_flow.png)
 
 常用线程安全的队列：
 
-![queue](../images/java_thread_threadpoolexecutor_queues.png)
+![queue](images/java_thread_threadpoolexecutor_queues.png)
 
 ### ScheduledThreadPoolExecutor
 

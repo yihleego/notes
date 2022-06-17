@@ -284,6 +284,14 @@ _TODO_
 
 ### Geospatial indexes
 
+## 过期策略
+
+## 持久化
+
+## 高可用
+
+## 一致性
+
 ## 分布式锁
 
 ### Redission

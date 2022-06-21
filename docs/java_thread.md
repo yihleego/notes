@@ -132,6 +132,132 @@ Result solve(Problem problem) {
 
 ## ThreadLocal
 
+`ThreadLocal`提供了线程内的局部变量，这种变量在线程的生命周期内起作用，减少同一个线程内多个方法或者组件之间一些公共变量的传递的复杂度。但是如果滥用`ThreadLocal`，就可能会导致内存泄漏
+
+```
+public class Thread implements Runnable {
+    /* ThreadLocal values pertaining to this thread. This map is maintained
+     * by the ThreadLocal class. */
+    ThreadLocal.ThreadLocalMap threadLocals = null;
+
+    /*
+     * InheritableThreadLocal values pertaining to this thread. This map is
+     * maintained by the InheritableThreadLocal class.
+     */
+    ThreadLocal.ThreadLocalMap inheritableThreadLocals = null;
+}
+```
+
+```java
+public class ThreadLocal<T> {
+   static class ThreadLocalMap {
+        private static final int INITIAL_CAPACITY = 16;
+        private Entry[] table;
+        private int size = 0;
+        private int threshold;
+        
+        static class Entry extends WeakReference<ThreadLocal<?>> {
+            Object value;
+
+            Entry(ThreadLocal<?> k, Object v) {
+                super(k);
+                value = v;
+            }
+        }
+   }
+}
+```
+
+`Thread`类内部维护了两个`ThreadLocal.ThreadLocalMap`类的映射表，分别为`threadLocals`和`inheritableThreadLocals`。
+
+`ThreadLocal.ThreadLocalMap`基于`hashtable`原理实现，其`Entry`继承自`WeakReference`类，`key`为`ThreadLocal`对象本身，`value`是真正存储的数据对象。
+
+也就是说`ThreadLocal`本身并不存储值，只是作为一个`key`来从线程的`ThreadLocal.ThreadLocalMap`中获取`value`。
+
+![java_thread_threadlocal](images/java_thread_threadlocal.png)
+
+### 引用
+
+### 内存泄漏
+
+由于`ThreadLocal.ThreadLocalMap`的`Entry`是继承自用`WeakReference`类，即通过弱引用将`ThreadLocal`作为作为`key`，
+所以如果某个`ThreadLocal`没有外部强引用来引用它，系统`GC`时会回收该`ThreadLocal`对象，但是如此一来`ThreadLocal.ThreadLocalMap`中就会出现`key`为`null`的`Entry`，
+并且我们没有办法访问到这些`Entry`的`value`，如果该线程对象一直不被回收的话，这些`Entry`的`value`就会一直存在于系统中无法被回收，造成内存泄漏。
+
+因此，`ThreadLocal`内存泄漏的根源是：由于`ThreadLocal.ThreadLocalMap`的生命周期跟`Thread`一样，如果没有手动删除数据就会导致内存泄漏，而不是因为弱引用。
+
+### 最佳实践
+
+综合上面的分析，我们可以理解`ThreadLocal`内存泄漏的原因，那么怎么避免内存泄漏呢？
+
+每次使用`ThreadLocal`的`set(T value)`方法后，需要在一个合适的时机调用的`remove()`方法清除数据。
+
+在使用线程池的情况下，没有及时清理`ThreadLocal`对应的数据，不仅是内存泄漏的问题，更严重的是可能导致业务逻辑出现问题。所以，使用`ThreadLocal`要像锁用完立即解锁一样，使用完需要及时清理。
+
+## InheritableThreadLocal
+
+由于`ThreadLocal`设计之初就是为了绑定当前线程，如果希望当前线程的`ThreadLocal`能够被子线程使用，实现方式就会相当困难（需要用户自己在代码中传递）。在此背景下，`InheritableThreadLocal`应运而生。
+
+上手我们提到`Thread`类中定义了`threadLocals`和`inheritableThreadLocals`两个变量，其中`inheritableThreadLocals`即主要存储可自动向子线程中传递的`ThreadLocal.ThreadLocalMap`。
+
+```java
+public class ThreadLocal<T> {
+    T childValue(T parentValue) {
+        throw new UnsupportedOperationException();
+    }
+    
+    ThreadLocalMap getMap(Thread t) {
+        return t.threadLocals;
+    }
+    
+    void createMap(Thread t, T firstValue) {
+        t.threadLocals = new ThreadLocalMap(this, firstValue);
+    }
+}
+
+public class InheritableThreadLocal<T> extends ThreadLocal<T> {
+    protected T childValue(T parentValue) {
+        return parentValue;
+    }
+
+    ThreadLocalMap getMap(Thread t) {
+       return t.inheritableThreadLocals;
+    }
+
+    void createMap(Thread t, T firstValue) {
+        t.inheritableThreadLocals = new ThreadLocalMap(this, firstValue);
+    }
+}
+```
+
+`InheritableThreadLocal`类继承了`ThreadLocal`类，并重写了的三个方法。
+
+- childValue：创建子线程时，复制父线程的`InheritableThreadLocal`至子线程时需要用到本方法
+- getMap：操作`InheritableThreadLocal`时，需要读取或修改`Thread`类中的`inheritableThreadLocals`变量，而不是`threadLocals`，所以需要重写
+- createMap：同上
+
+```java
+private void init(ThreadGroup g, Runnable target, String name,
+                  long stackSize, AccessControlContext acc,
+                  boolean inheritThreadLocals) {
+    // ignored
+
+    if (inheritThreadLocals && parent.inheritableThreadLocals != null)
+        this.inheritableThreadLocals =
+            ThreadLocal.createInheritedMap(parent.inheritableThreadLocals);
+
+    // ignored
+}
+```
+
+从`Thread`类的源码中我们可以看到，采用默认方式产生子线程，若`inheritThreadLocals`为`true`，且父线程`inheritableThreadLocals`不为空时，则复制一份父线程`inheritableThreadLocals`到子线程。
+
+### 应用
+
+调用链追踪：在调用链系统设计中，为了优化系统运行速度，会使用多线程编程，为了保证调用链`traceId`和`spanId`能够自然的在多线程间传递，需要考虑传递问题。
+灰度路由：在各个服务之间传递灰度标识，尤其是针对通过异步调用的服务。
+用户会话：将用户`Session`储存到`ThreadLocal`中，方便开发者可以跨方法跨线程获取全局`Session`。
+
 ## wait 和 sleep
 
 ### wait和sleep的相同点和不同点

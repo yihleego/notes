@@ -148,7 +148,9 @@ insert into test(v) values(12); # 区间外 预测：non-blocking 实际：non-b
 
 TODO
 
-## 测试题
+## 各种SQL语句设置的锁
+
+### INSERT
 
 假设存在如下表：
 
@@ -173,6 +175,8 @@ create table test
 
 为什么 Session 1 回滚会导致 Session 3 死锁，而 Session 2 可以插入成功呢？
 
-原因是 Session 1 插入成功后未提交事务，此时持有排它锁（X）， Session 2 和 Session 3 需要排队获取共享锁（S）检查唯一索引。
-Session 1 插入成功后 rollback ，于是 Session 2 和 Session 3 同时获得了共享锁（S），发现不存在冲突的唯一索引，所以它们此时都想升级排它锁（X），
+原因是 Session 1 插入成功后未提交事务，此时持有排它锁（X）， Session 2 和 Session 3 操作都导致重复键错误，所以它们都会等待请求共享锁（S）检查唯一索引。
+Session 1 回滚后 ，Session 2 和 Session 3 会同时获得共享锁（S），由于此时不存在重复键，所以它们此时都想升级排它锁（X），
 于是双方都在等对方释放共享锁（S）而发生死锁，最后只能 abort 其中一个，而另一个成功升级排它锁（X）之后插入成功。
+
+官方文档：https://dev.mysql.com/doc/refman/8.0/en/innodb-locks-set.html

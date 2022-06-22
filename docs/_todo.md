@@ -1,4 +1,4 @@
-Java > JVM
+Java > JVM > GC
 Java > 动态代理
 Redis
 Spring Boot

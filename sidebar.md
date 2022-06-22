@@ -20,11 +20,9 @@
     - [Dubbo 🌧️](docs/dubbo.md)
 - Databases
     - [MySQL ☀️](docs/mysql.md)
-        - [索引结构](docs/mysql_index.md)
-        - [InnoDB Locking](docs/mysql_innodblocking.md)
+        - [InnoDB](docs/mysql_innodb.md)
+        - [Binary Log](docs/mysql_binary_log.md)
         - [Metadata Locking](docs/mysql_metadatalocking.md)
-        - [事务基本特性和隔离级别](docs/mysql_transaction.md)
-        - [InnoDB和MyISAM的区别](docs/mysql_myisam.md)
         - [分库分表](docs/mysql_sharding.md)
         - [读写分离](docs/mysql_readwritesplitting.md)
     - [Redis ⛅](docs/redis.md)

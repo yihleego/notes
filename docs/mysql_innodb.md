@@ -36,7 +36,7 @@ Linux 文件系统页（OS Page）的大小是`4KB`。
 
 ![mysql_innodb_writepages_interrupt](images/mysql_innodb_writepages_interrupt.png)
 
-如上图所示，MySQL 内 Page 1 的页准备写入数据到磁盘，写到最后一个文件系统的页时断电了，则会出现，重启 MySQL 服务后，Page 1 的页对应磁盘上的 Page 1、Page 2、Page 3 三个页，显然，数据完整性被破坏了。
+如上图所示，MySQL 内 Page 1 的页准备写入数据到磁盘，写到最后一个文件系统的页时断电了，则会出现，重启 MySQL 服务后，Page 1 的页对应磁盘上的 Page 1、Page 2、Page 3 三个页，显然，数据不完整。
 
 针对上述出现的情况，很容易想到的方法是，通过一个副本对原来的页进行还原，这个存储副本的地方即为双写缓冲区。与传统的 Buffer 不同，它分为内存和磁盘的两层架构。
 
@@ -63,27 +63,65 @@ _写缓冲区内存结构由128个页（Page）构成，所以容量为`16KB × 
     第3步，无论是否启双写缓冲区，均需要这一步将数据写入磁盘，不属于额外开销。
     虽然数据被写入两次，但双写缓冲区不需要两倍的 I/O 开销或两倍的 I/O 操作。数据以大顺序块的形式写入双写缓冲区，只需fsync()调用操作系统一次。
 
+## 缓冲池 Buffer Pool
+
+MySQL 的数据是存储在磁盘里的，当更新一条记录的时候，需要先从磁盘里面读取数据，然后在内存中修改这条记录。
+但是显然不能每次都从磁盘里面读取数据，这样性能是极差的。为了提升读写读性能，我们容易想到缓存，当数据从磁盘中取出后缓存到内存中，下次查询同样的数据的时候，直接从内存中取。
+
+为此，Innodb 存储引擎设计了一个缓冲池（Buffer Pool），用于访问表和索引数据时对其进行缓存。缓冲池允许直接从内存中访问经常使用的数据，从而加快处理速度。
+在专用服务器上，通常分配多达 80% 的物理内存给缓冲池。
+
+为了提高大容量读取操作的效率，缓冲池被划分为可能包含多行的页面。为了缓存管理的效率，缓冲池被实现为页链表，
+缓冲池使用 LRU 算法的变体作为列表进行管理。当需要空间来向缓冲池添加新页面时，最近最少使用的页面将被逐出，并将新页面添加到列表的中间。
+
+InnoDB 会把存储的数据划分为若干个页，以页作为磁盘和内存交互的基本单位，一个页的默认大小为 16KB。因此，缓冲池同样需要按页来划分。
+
+在 MySQL 启动的时候，InnoDB 会为缓冲池申请一片连续的内存空间（默认大小为 128MB，可以通过`innodb_buffer_pool_size`参数调整），
+然后按照默认的 16KB 的大小划分出一个个的页，缓冲池中的页就叫做缓存页。此时这些缓存页都是空的，随着程序的运行，磁盘上的数据才会被缓存到缓冲池中。
+所以，MySQL 刚启动的时候，你会观察到使用的虚拟内存空间很大，而使用到的物理内存空间却很小，这是因为只有这些虚拟内存被访问后，操作系统才会触发缺页中断，接着将虚拟地址和物理地址建立映射关系。
+
 ## 重做日志 Redo Log
 
-Redo Log 是一种基于磁盘的数据结构，用于在崩溃恢复期间纠正由不完整事务写入的数据。在正常操作期间，Redo Log 对由 SQL 语句或低级 API 调用产生的更改表数据的请求进行编码。
-在意外关闭之前未完成更新数据文件的修改会在初始化期间和接受连接之前自动重播。
+Redo Log 是一种基于磁盘的数据结构，用于在崩溃恢复期间纠正由不完整事务写入的数据。
 
-InnoDB 与其他任何符合 ACID 的数据库引擎一样，在提交事务之前写入事务的 Redo Log。
-InnoDB 使用组提交功能将多个写入请求组合在一起，以避免每次提交一次刷新。
-对于组提交，InnoDB 向日志文件发出一次写操作，以对几乎同时提交的多个用户事务执行提交操作，从而显著提高吞吐量。
+当修改一条记录的时候，InnoDB 储存引擎会在事务提交时，把记录写到 Redo Log 里，并更新内存中的数据，这时修改操作就算完成了。
+同时，InnoDB 储存引擎会在适当的时候，由后台线程将 Buffer Pool 中的脏页刷新到磁盘里。
+
+实际上，执行一个事务，产生的 Redo Log 不是直接写入磁盘的，因为这样会产生大量的 I/O 操作，而且磁盘的运行速度远慢于内存。
+所以，Redo Log 包括两个部分：一个是内存中的日志缓冲（Redo Log Buffer），另一个是持久化到磁盘上的日志文件（Redo Log File）。
+每产生一条 Redo Log 时，先将记录写入到 Redo Log Buffer，后续再将记录刷入到 Redo Log File。
+
+默认情况下，Redo Log 在磁盘上由两个名为`ib_logfile0`和`ib_logfile1`的文件物理表示的。
+InnoDB 存储引擎以循环方式写入重做日志文件，先写`ib_logfile0`文件，当它被写满的时候，会切换至`ib_logfile1`文件，当它也被写满时，会切换回`ib_logfile0`文件。
+
+对于 Redo Log 刷盘持久化有三种策略，通过`innodb_flush_log_at_trx_commit`变量配置：
+
+- `0`：提交事务时，不会⽴即将 Redo Log Buffer 中的数据写到磁盘，⽽是每秒触发⼀次，性能最好，不能保证一致性，崩溃时可能丢失一秒的数据
+- `1`：提交事务时，⽴即将 Redo Log Buffer 中的数据写到磁盘，性能最差，保证一致性。
+- `2`：提交事务时，⽴即将 Redo Log Buffer 中的数据写到 OS Buffer，性能和一致性折中的方案，依赖 OS 的稳定性。
+
+`innodb_flush_log_at_trx_commit`的默认值为`1`是为了保证 ACID 模型中的稳定性。
+
+Redo Log 是为了防止 Buffer Pool 中的脏页丢失而设计的，随着系统运行，Buffer Pool 的脏页刷到了磁盘中，Redo Log 对应的数据也就没用了，这时候这些数据就会被擦除，所占的空间就可以被释放。
+
+所以当 Redo Log 被写满时，系统会阻塞所有更新操作，直到 Buffer Pool 的脏页刷到了磁盘中，然后 Redo Log 释放了足够的空间。
 
 ## 撤消日志 Undo Log
 
-单个读写事务关联的 Undo Log 记录的集合称为 Undo Logs。
-Undo Log 记录包含有关如何撤消事务对聚簇索引记录的最新更改的信息。
-如果另一个事务需要将原始数据视为一致读（快照读）操作的一部分，则从 Undo Log 记录中检索未修改的数据。
+Undo Log 是一种用于撤销回退的日志。在操作表数据之前，InnoDB 储存引擎会记录操作前的数据到 Undo Log 文件里，当事务回滚时，可以利用 Undo Log 来进行回滚。
 
-驻留在全局临时表空间中的 Undo Log 用于修改用户定义临时表中数据的事务。
-Undo Log 不同于 Redo Log，因为它们不需要崩溃恢复。它们仅用于在服务器运行时进行回滚。这种类型的 Undo Log 通过避免 Redo Log 记录 I/O 来提高性能。
+- `INSERT`操作：保存主键值，回滚时，通过主键值删除对应的记录
+- `UPDATE`操作：保存被更新读列内容，回滚时，更新相关列的数据
+- `DELETE`操作：保存所有内容，回滚时，将所有内容组成记录插入到表中
 
-InnoDB 存储引擎通过 Undo Log 实现多版本并发控制（multiversion concurrency control, MVCC）。
+每一条记录的每一次增删改操作都会产生一条 Undo Log 记录，其中包含`roll_pointer`和`trx_id`。
+通过`trx_id`可以判断该记录是被哪个事务修改的。
+通过`roll_pointer`可以将 Undo Log 连成一个版本链，版本链的头节点就是当前记录最新的值，版本链也是多版本并发控制（MVCC）的关键组成部分。
 
-_MVCC 只在读已提交（READ-COMMITTED）和可重复读（REPEATABLE-READ）两种隔离级别下工作。_
+总结 Undo Log 两大作用：
+
+- 实现事务回滚，保障事务的原子性。事务处理过程中，如果出现了错误或者执行了`ROLLBACK`语句，InnoDB 储存引擎可以通过 Undo Log 中的历史数据将数据恢复到事务开始之前的状态。
+- 实现多版本并发控制（MVCC）的关键组成部分。Undo Log 为每一条记录保存多份历史数据，InnoDB 储存引擎在执行一致读（快照读）的时候，会根据事务的 Read View 里的信息，顺着 Undo Log 的版本链找到满足其可见性的记录。
 
 ## 锁 Locking
 
@@ -155,7 +193,7 @@ InnoDB 支持多粒度锁，允许行锁和表锁共存。例如：`LOCK TABLES 
 
 InnoDB 中的间隙锁是“纯粹的抑制性”，这意味着它们的唯一目的是防止其他事务插入到间隙中。间隙锁可以共存。一个事务采用的间隙锁不会阻止另一个事务在同一间隙上采用间隙锁。共享和排他间隙锁之间没有区别。它们彼此不冲突，并且执行相同的功能。
 
-间隙锁定可以被显式禁用。如果您将事务隔离级别更改为`READ COMMITTED`，则会发生这种情况。在这种情况下，间隙锁定对搜索和索引扫描禁用，仅用于外键约束检查和重复键检查。
+间隙锁可以被显式禁用。如果您将事务隔离级别更改为`READ COMMITTED`，则会发生这种情况。在这种情况下，间隙锁对搜索和索引扫描禁用，仅用于外键约束检查和重复键检查。
 
 ### 临键锁 Next-Key Locks
 
@@ -349,32 +387,64 @@ InnoDB 使用一种特殊的表级[自增锁](#自增锁-AUTO-INC-Locks)，在�
 
 ## 事务 Transaction
 
+### 事务并发问题
+
+#### 脏读 Dirty Reads
+
+检索不可靠数据的操作，即一个事务读取了由另一个事务更新但尚未提交的数据，这种情况称为脏读。
+
+这种操作不符合数据库设计的 ACID 原则。脏读是非常危险的，因为数据可能会回滚，或者在提交之前进一步更新，执行脏读的事务将使用从未被确认为准确的数据。
+
+#### 不可重复读 Non-Repeatable Reads
+
+当一个查询检索数据，而同一事务中的后续查询检索的应该是相同的数据，但查询返回的结果不同（同时由另一个提交的事务更改）时的情况，这种情况称为不可重复读。
+
+这种操作不符合数据库设计的 ACID 原则。在事务中，数据应该是具有一致性，可预测性和稳定性的。
+
+#### 幻读 Phantom Reads
+
+显示在查询的结果集中，但不显示在早期查询的结果集中的行。例如，如果一个查询在一个事务中运行两次，同时，另一个事务在插入新行或更新行以使其与查询的WHERE子句匹配后提交，这种情况称为幻读。
+
+这比不可重复读更难防范，因为锁定第一个查询结果集中的所有行不能阻止幻影的出现。
+
 ### 事务隔离级别 Transaction Isolation Levels
 
 事务隔离是数据库处理的基础之一。隔离级别是在多个事务同时进行更改和执行查询时微调性能和结果的可靠性、一致性和可再现性之间的平衡的设置。
 
-InnoDB 提供`SQL:1992`标准描述的所有四个事务隔离级别：`READ UNCOMMITTED`、`READ COMMITTED`、`REPEATABLE READ`和`SERIALIZABLE`。
-默认隔离级别为`REPEATABLE READ`。
+InnoDB 提供`SQL:1992`标准描述的所有四个事务隔离级别：读未提交`READ UNCOMMITTED`、读已提交`READ COMMITTED`、可重复读`REPEATABLE READ`和可串行化`SERIALIZABLE`。
+默认隔离级别为：可重复读`REPEATABLE READ`。
+
+|                  | 脏读  | 不可重复读 | 幻读  |
+|:-----------------|:----|:------|:----|
+| READ UNCOMMITTED | 是   | 是     | 是   |
+| READ COMMITTED   | 否   | 是     | 是   |
+| REPEATABLE READ  | 否   | 否     | 是   |
+| SERIALIZABLE     | 否   | 否     | 否   |
 
 #### 读未提交 READ UNCOMMITTED
 
-TODO
+读未提交隔离级别下，`SELECT`语句是以非锁定方式执行，可能会读到其他事务未提交的数据，也就意味着这些数据可能会被回滚。
+因此，使用此隔离级别，这样的读取是不一致的，这也称为脏读。
 
 #### 读已提交 READ COMMITTED
 
-TODO
+读已提交隔离级别下，即使在同一事务中，每一次一致读（快照读）都会读取最新都快照。
+
+对于锁定读（当前读，带有`FOR UPDATE`或`FOR SHARE`的`SELECT`语句）、`UPDATE`和`DELETE`语句，仅锁定索引记录，而不锁定它们之前的间隙，因此允许在锁定记录旁边自由插入新记录。间隙锁仅用于外键约束检查和重复键检查。
+
+由于禁用了间隙锁，可能会出现幻读问题，因为其他会话可以将新行插入间隙。
+
+读已提交隔离级别仅支持基于行的 Binary Log 记录。如果将读取提交与`binlog_format=MIXED`一起使用，服务器将自动使用基于行的日志记录。
+
+使用`READ COMMITTED`的额外影响：
+
+对于`UPDATE`或`DELETE`语句，仅对其更新或删除的行持有锁。MySQL 评估`WHERE`条件后，将释放不匹配行的记录锁。这大大降低了死锁的可能性，但死锁仍然可能发生。
+
+对于`UPDATE`语句，如果一行已经锁定，将执行“半一致”读取，将最新提交的版本返回给MySQL，以便MySQL可以确定该行是否匹配更新的WHERE条件。如果行匹配（必须更新），MySQL将再次读取该行，这次InnoDB将锁定该行或等待锁定。
 
 #### 可重复读 REPEATABLE READ
 
-This is the default isolation level for InnoDB. Consistent reads within the same transaction read the snapshot established by the first read. This means that if you issue several plain (nonlocking) SELECT statements within the same transaction, these SELECT statements are consistent also with respect to each other. See Section 15.7.2.3, “Consistent Nonlocking Reads”.
-
-For locking reads (SELECT with FOR UPDATE or FOR SHARE), UPDATE, and DELETE statements, locking depends on whether the statement uses a unique index with a unique search condition, or a range-type search condition.
-
-For a unique index with a unique search condition, InnoDB locks only the index record found, not the gap before it.
-
-For other search conditions, InnoDB locks the index range scanned, using gap locks or next-key locks to block insertions by other sessions into the gaps covered by the range. For information about gap locks and next-key locks, see Section 15.7.1, “InnoDB Locking”.
-
-`REPEATABLE READ`是的默认隔离级别。同一事务中一致读（快照读）会获取第一次读取建立的快照。这意味着，如果在同一事务中发出多个普通（非锁定）`SELECT`语句，这些`SELECT`语句也相互一致。
+可重复读是的默认隔离级别。同一事务中一致读（快照读）会获取第一次读取建立的快照。这意味着，如果在同一事务中发出多个普通（非锁定）`SELECT`语句，这些`SELECT`语句也相互一致。
 
 对于锁定读（当前读，带有`FOR UPDATE`或`FOR SHARE`的`SELECT`语句）、`UPDATE`和`DELETE`语句，锁取决于语句是使用具有唯一搜索条件的唯一索引，还是使用范围类型的搜索条件。
 
@@ -383,7 +453,11 @@ For other search conditions, InnoDB locks the index range scanned, using gap loc
 
 #### 可串行化 SERIALIZABLE
 
-TODO
+`SERIALIZABLE`隔离级别类似于`REPEATABLE READ`，
+如果禁用了`autocommit`，InnoDB 会将所有普通`SELECT`语句隐式转换为`SELECT ... FOR SHARE`。
+如果启用了`autocommit`，则`SELECT`会有它自己的事务。因此，已知它是只读的，如果作为一致读（快照读）执行，则无需被其他事务阻塞。
+
+如果其他事务修改了选定的行，想要强制阻塞一个普通的`SELECT`语句，需要用户禁用`autocommit`。
 
 ## ACID
 

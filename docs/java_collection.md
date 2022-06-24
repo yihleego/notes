@@ -151,6 +151,15 @@ _在并发场景中，应该使用线程安全的`ConcurrentHashMap`_
 `LinkedHashMap`是`HashMap`的一个子类，由于其内部维护了一个双向链表，因此可以按插入顺序遍历元素。
 此外，`LinkedHashMap`可以很好的支持`LRU (Least Recently Used)`算法，调用构造方法时将`accessOrder`设置为`true`，即可按照访问次序排序。
 
+默认情况下，`LinkedHashMap`是不会自动淘汰最近最少使用的元素，可以通过重写`LinkedHashMap`的`removeEldestEntry`方法实现自定义淘汰机制。
+例如：重写方法允许最多存在 100 个元素，然后在每次新增时，删除最旧的元素，保持 100 个元素的稳定状态。
+
+```java
+protected boolean removeEldestEntry(Map.Entry<K,V> eldest) {
+    return size() > 100;
+}
+```
+
 ## TreeMap
 
 - 有序，不允许重复（非插入顺序，而是根据指定的`Comparator`比较器）

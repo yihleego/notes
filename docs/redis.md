@@ -793,8 +793,9 @@ Redis 服务通过订阅 MySQL binlog 同步所有数据到缓存中。该方案
 
 ```java
 private void tryLock() {
-    // 判断是否锁获取成功
+    // 通过 SETNX 命令尝试获取锁
     boolean locked = redis.setnx("lock", "1");
+    // 判断是否锁获取成功
     while (!locked) {
         // 获取锁失败，等待后重试，或返回错误
         return;
@@ -809,14 +810,40 @@ private void tryLock() {
 }
 ```
 
-该方案存在一个问题：如果业务还未处理完，锁还未被释放时，服务器被重启或发生崩溃，则锁永远无法被自动释放，需要人工介入排查原因。
+该方案存在一个问题：如果业务还在处理中，锁还未被释放时，服务器被重启或发生崩溃，则锁永远无法被自动释放，需要人工介入排查原因。
+
+### 设置超时时间方案（不推荐）
+
+```java
+private void tryLock() {
+    // 锁超时时间
+    long timeout = 5 * 60 * 1000;
+    // 通过 SET key value [EX seconds] [PX milliseconds] NX 命令尝试获取锁，并设置超时时间
+    boolean locked = redis.set("lock", "1", timeout);
+    // 判断是否锁获取成功
+    while (!locked) {
+        // 获取锁失败，等待后重试，或返回错误
+        return;
+    }
+    try {
+        // 如果获取锁成功，处理业务
+        // ...
+    } catch (Exception e) {
+        // 释放锁
+        redis.del("lock");
+    }
+}
+```
+
+该方案存在一个问题：如果处理业务所需要的时间超出了锁的超时时间，则相当于提前释放了锁，可能造成严重的业务事故。
+如果给锁设置了很长的超时时间，在业务还未处理完，锁还未被释放时，服务器重启或崩溃，则可能造成长时间业务堵塞，需要人工介入排查原因。
 
 ### 基于时间戳（不推荐）
 
 ```java
 private void tryLock() {
     // 锁超时时间
-    long timeout = 60 * 1000;
+    long timeout = 5 * 60 * 1000;
     // 当前时间戳
     long timestamp = System.currentTimeMillis();
     // 判断是否锁获取成功
@@ -843,8 +870,7 @@ private void tryLock() {
 }
 ```
 
-该方案存在一个问题：如果处理业务所需要的时间超出了锁的超时时间，则相当于提前释放了锁，可能造成严重的业务事故。
-如果给锁设置了很长的超时时间，在业务还未处理完，锁还未被释放时，服务器重启或崩溃，则可能造成长时间业务堵塞，需要人工介入排查原因。
+该方案的问题与[设置超时时间方案](#设置超时时间方案（不推荐）)是一样的。
 
 ### 看门狗（推荐）
 
@@ -852,8 +878,9 @@ private void tryLock() {
 private void tryLock() {
     // 锁超时时间
     long timeout = 60 * 1000;
-    // 判断是否锁获取成功（此处可以通过 Lua 脚本实现 SETNX 操作带超时时间）
-    boolean locked = redis.setIfAbsent("lock", "1", timeout, TimeUnit.MILLISECONDS);
+    // 通过 SET key value [EX seconds] [PX milliseconds] NX 命令尝试获取锁，并设置超时时间
+    boolean locked = redis.set("lock", "1", timeout);
+    // 判断是否锁获取成功
     while (!locked) {
         // 获取锁失败，等待后重试，或返回错误
         return;
@@ -872,9 +899,8 @@ private void tryLock() {
 }
 ```
 
-该方案通过 Lua 脚本或 Redis 事务，将`SETNX`操作和`EXPIRE`操作以原子操作执行，如果成功获取锁，则顺便设置了一个较短的超时时间。
-
-通过看门狗给锁续期，可以防止业务还未处理完，锁被提前释放的情况发生。如果业务处理中时，服务器重启或崩溃，则可以通过较短的超时时间自动释放锁，防止业务被长时间阻塞。
+该方案在获取锁的同时，顺便设置了一个较短的超时时间，通过看门狗给锁续期，可以防止业务还未处理完，锁被提前释放的情况发生。
+如果业务处理中时，服务器重启或崩溃，则可以通过较短的超时时间自动释放锁，防止业务被长时间阻塞。
 
 ### Redission
 

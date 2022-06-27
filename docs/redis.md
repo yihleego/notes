@@ -4,6 +4,8 @@
 
 ## 数据类型
 
+[Redis data types](https://redis.io/docs/manual/data-types/)
+
 ### redisObject
 
 在 Redis 中存在一个名为 redisObject 的结构体，此结构基本上可以表示所有基本的Redis数据类型，如：strings、lists、sets、sorted sets等。
@@ -297,7 +299,7 @@ typedef struct intset {
 
 #### hash table
 
-![Hash 哈希](#Hash-哈希)
+![哈希 Hash](#哈希-Hash)
 
 ### 有序集合 Sorted Set
 
@@ -371,7 +373,7 @@ GEO 主要用于存储地理位置信息，并对存储的信息进行操作。
 
 ## 命令
 
-### 键 key
+### 键命令 Key Commands
 
 - `DEL key`：该命令用于在 key 存在时删除 key
 - `DUMP key`：序列化给定 key ，并返回被序列化的值
@@ -391,7 +393,7 @@ GEO 主要用于存储地理位置信息，并对存储的信息进行操作。
 - `SCAN cursor [MATCH pattern] [COUNT count]`：迭代数据库中的数据库键
 - `TYPE key`：返回 key 所储存的值的类型
 
-### 字符串 String
+### 字符串命令 String Commands
 
 - `SET key value`：设置指定 key 的值
 - `GET key`：获取指定 key 的值
@@ -414,7 +416,7 @@ GEO 主要用于存储地理位置信息，并对存储的信息进行操作。
 - `DECRBY key decrement`：key 所储存的值减去给定的减量值（decrement）
 - `APPEND key value`：如果 key 已经存在并且是一个字符串， APPEND 命令将指定的 value 追加到该 key 原来值（value）的末尾。
 
-### 列表 List
+### 列表命令 List Commands
 
 - `BLPOP key1 [key2 ] timeout`：移出并获取列表的第一个元素， 如果列表没有元素会阻塞列表直到等待超时或发现可弹出元素为止
 - `BRPOP key1 [key2 ] timeout`：移出并获取列表的最后一个元素， 如果列表没有元素会阻塞列表直到等待超时或发现可弹出元素为止
@@ -434,7 +436,7 @@ GEO 主要用于存储地理位置信息，并对存储的信息进行操作。
 - `RPUSH key value1 [value2]`：在列表中添加一个或多个值
 - `RPUSHX key value`：为已存在的列表添加值
 
-### 集合 Set
+### 集合命令 Set Commands
 
 - `SADD key member1 [member2]`：向集合添加一个或多个成员
 - `SCARD key`：获取集合的成员数
@@ -452,7 +454,7 @@ GEO 主要用于存储地理位置信息，并对存储的信息进行操作。
 - `SUNIONSTORE destination key1 [key2]`：所有给定集合的并集存储在 destination 集合中
 - `SSCAN key cursor [MATCH pattern] [COUNT count]`：迭代集合中的元素
 
-### 有序集合 Sorted Set
+### 有序集合命令 Sorted Set Commands
 
 - `ZADD key score1 member1 [score2 member2]`：向有序集合添加一个或多个成员，或者更新已存在成员的分数
 - `ZCARD key`：获取有序集合的成员数
@@ -475,7 +477,7 @@ GEO 主要用于存储地理位置信息，并对存储的信息进行操作。
 - `ZUNIONSTORE destination numkeys key [key ...]`：计算给定的一个或多个有序集的并集，并存储在新的 key 中
 - `ZSCAN key cursor [MATCH pattern] [COUNT count]`：迭代有序集合中的元素（包括元素成员和元素分值）
 
-### 哈希 Hash
+### 哈希命令 Hash Commands
 
 - `HDEL key field1 [field2]`：删除一个或多个哈希表字段
 - `HEXISTS key field`：查看哈希表 key 中，指定的字段是否存在
@@ -492,7 +494,7 @@ GEO 主要用于存储地理位置信息，并对存储的信息进行操作。
 - `HVALS key`：获取哈希表中所有值
 - `HSCAN key cursor [MATCH pattern] [COUNT count]`：迭代哈希表中的键值对
 
-### 位图 Bitmap
+### 位图命令 Bitmap Commands
 
 - `SETBIT key offset value`：设置 value
 - `GETBIT key offset`：获取 value
@@ -500,7 +502,7 @@ GEO 主要用于存储地理位置信息，并对存储的信息进行操作。
 - `BITOP [operations] [result] [key ...]`：运算操作
 - `BITPOS key value`：获取第一次出现 value 的位置
 
-### HyperLogLog
+### HyperLogLog Commands
 
 - `PFADD key element [element ...]`：添加指定元素到 HyperLogLog 中。
 - `PFCOUNT key [key ...]`：返回给定 HyperLogLog 的基数估算值。
@@ -623,16 +625,258 @@ AOF 以易于理解和解析的格式依次包含所有操作的日志。甚至�
 
 ## 高可用
 
-## 一致性
+### Redis Master-Slave 主从模式
+
+Redis Master-Slave 主要用于实现一主多从，读写分离的架构，主数据库（master）支持读写（read/write），从数据库（slave）支持只读（readonly）.
+这种模式下，客户端直接连 master 或某个 slave，服务端崩溃故障，需要⼿动切换客户端连接。
+
+Redis 主从复制分为全量同步和增量同步，首次同步为全量同步。
+
+1. slave 连接至 master 后，发送`SYNC`命令
+2. master 接收到`SYNC`命令后，开始执行`BGSAVE`命令生成 RDB 快照文件并使用缓冲区记录此后执行的所有写命令
+3. master 执行`BGSAVE`命令完成后，向所有 slave 发送快照文件，并在发送期间继续记录被执行的写命令
+4. slave 收到快照文件后丢弃所有旧数据，载入收到的快照
+5. master 快照发送完毕后开始向 slave 发送缓冲区中的写命令
+6. slave 完成对快照的载入，开始接收命令请求，并执行来自 master 缓冲区的写命令
+7. slave 之后的同步会先发送自己`slave_repl_offset`位置，只同步增量数据
+
+### Redis Sentinel 哨兵模式
+
+Redis Master-Slave 模式下，一旦主节点由于故障不能提供服务，需要人工将从节点晋升为主节点，同时还要通知应用方更新主节点地址，对于很多应用场景这种故障处理的方法是无法接受的。
+Redis 2.8 版本开始正式提供了哨兵模式来解决这个问题。
+
+Redis Sentinel 是一个分布式架构，其中包含若干个哨兵节点和数据节点，每个哨兵节点会对数据节点和其余哨兵节点进行监控，当发现某个节点不可达时，会对节点做下线标识。
+如果主节点不可达时，它还会和其他哨兵节点进行“协商”，当大多数哨兵节点都认为主节点不可达时，它们会选举出一个哨兵节点来完成自动故障转移的工作，同时会将这个变化通知给客户端。
+整个过程完全是自动的，不需要人工来介入，所以这套方案很有效地解决了高可用问题。
+
+### Redis Cluster 集群模式（推荐）
+
+Redis Cluster 是由多个主从节点群组成的分布式服务器群，其特点如下：
+
+- 多主多从去中心化：至少需要6个节点（即3主3从），从节点只作备份和故障转移用，不分担读请求的任务，当有请求读向从节点时，会被重定向对应的主节点来处理
+- 节点之间相互通信：主节点之间相互“监督”，保证及时故障转移
+- 支持动态扩容缩容：在对集群进行扩容和缩容时，需要对槽及槽中数据进行迁移
+- 多 key 操作限制：由于数据分散在多个节点，因此多 key 操作只有在同一个 slot 时才能被执行
+- 只支持一个数据库：只支持使用一个数据库（database 0），所以 select 命令不能用
+
+Redis Cluster 将所有数据划分为 16384 个 slots（槽位），每个节点负责其中一部分槽位。槽位的信息存储于每个节点中。
+当客户端来连接集群时，它也会得到一份集群的槽位配置信息并将其缓存在客户端本地。这样当客户端要查找某个 key 时，可以直接定位到目标节点。
+同时因为槽位的信息可能会存在客户端与服务器不一致的情况，还需要纠正机制来实现槽位信息的校验调整。
+
+### 槽位定位算法
+
+Redis Cluster 默认会对 key 值使用 CRC16 算法进行 hash 得到一个整数值，然后用这个整数值对 16384 进行取模来得到具体槽位。
+
+公式：`HASH_SLOT = CRC16(key) % 16384`
+
+### 跳转重定位
+
+当客户端向一个错误的节点发出了指令，该节点会发现指令的 key 所在的槽位并不归自己管理，这时它会向客户端发送一个特殊的跳转指令携带目标操作的节点地址，告诉客户端去连这个节点去获取数据。
+客户端收到指令后除了跳转到正确的节点上去操作，还会同步更新纠正本地的槽位映射表缓存，后续所有 key 将使用新的槽位映射表。
+
+### 集群节点间的通信机制
+
+Redis Cluster 节点间采取 Gossip 协议进行通信，主要职责就是信息交换，协议包含多种消息：
+
+- `ping`：集群内每个节点每秒向多个其他节点发送`ping`消息，⽤于检测节点是否在线和交换彼此状态信息。`ping`消息中封装了⾃⾝节点和部分其他节点的状态数据
+- `pong`：当接收到`ping`和`meet`消息时，作为响应消息回复给发送⽅确认消息正常通信。`pong`消息内部封装了⾃⾝状态数据。节点也可以向集群内⼴播⾃⾝的`pong`消息来通知整个集群对⾃⾝状态进⾏更新
+- `meet`：消息发送者通知接收者加⼊到当前集群，`meet`消息通信正常完成后，接收节点会加⼊到集群中并进⾏周期性的`ping`、`pong`消息交换
+- `fail`：当节点判定集群内另⼀个节点下线时，会向集群内⼴播⼀个`fail`消息，其他节点接收到`fail`消息之后把对应节点更新为下线状态
+
+每个节点都有一个专门用于节点间 Gossip 通信的端口，通信端⼝号为服务端⼝上加`10000`，比如：当前 Redis 服务端口号为`6379`，则 Gossip 通信的端口号为`16379`。
+
+## 数据库与缓存双写一致性
+
+### 删除缓存和更新缓存的区别
+
+这取决于缓存的使用场景：
+
+- 如果数据库的某个数据需要频繁地修改，而缓存的数据访问频率比较低，甚至需要通过复杂的算法计算出来，则适合删除缓存
+- 如果数据库的某个数据不需要频繁地修改，而是会被频繁地读，则适合更新缓存
+
+### 先删除缓存，后更新数据库（不推荐）
+
+在并发场景下，可能会导致缓存中的值为旧数据。
+
+#### 缓存已存在
+
+|     | 线程 1        | 线程 2        |
+|:----|:------------|:------------|
+| 1   | 删除缓存，删除成功   |             |
+| 2   |             | 读取缓存，不存在    |
+| 3   |             | 读取数据库，值为`A` |
+| 4   | 更新数据库，值为`B` |             |
+| 5   |             | 更新缓存，值为`A`  |
+
+#### 缓存不存在
+
+|     | 线程 1        | 线程 2        |
+|:----|:------------|:------------|
+| 1   |             | 读取缓存，不存在    |
+| 2   | 删除缓存        |             |
+| 3   |             | 读取数据库，值为`A` |
+| 4   | 更新数据库，值为`B` |             |
+| 5   |             | 更新缓存，值为`A`  |
+
+### 先更新数据库，后删除缓存（推荐）
+
+先更新数据库，后删除缓存的方案，也被称为 [Cache-Aside pattern](https://docs.microsoft.com/en-us/azure/architecture/patterns/cache-aside)，
+此方案被各大互联网厂商采用，其中包括知名社交网站 Facebook，他们在论文 [《Scaling Memcache at Facebook》](https://www.usenix.org/system/files/conference/nsdi13/nsdi13-final170_update.pdf)
+中提到了该方案。
+
+Cache-Aside pattern 基本原理：
+
+- 失效：应用程序先从缓存取数据，没有得到，则从数据库中取数据，成功后，放到缓存中。
+- 命中：应用程序从缓存中取数据，取到后返回。
+- 更新：先把数据存到数据库中，成功后，再让缓存失效。
+
+但是在并发场景下，可能会出现缓存中的值为旧数据的问题：
+
+|     | 线程 1        | 线程 2        |
+|:----|:------------|:------------|
+| 1   | 读取缓存，不存在    |             |
+| 2   | 读取数据库，值为`A` |             |
+| 3   |             | 更新数据库，值为`B` |
+| 4   |             | 删除缓存        |
+| 5   | 更新缓存，值为`A`  |             |
+
+然而，发生这种情况的概率非常低，发生上述情况有一个先天性条件，就是步骤（3）写数据库操作比步骤（2）读数据库操作耗时更短，才有可能使得步骤（4）先于步骤（5）。
+实际上，数据库的读操作的速度远快于写操作的，因此步骤（3）耗时比步骤（2）更短这一情形很难出现。
+
+如果出现上述并发问题，可以给缓存设置有效时间，待缓存失效后就可以获取最新的数据。如果该补救方案也无法被接受，可以采用[延时双删](#延时双删)方案。
+
+### 延时双删（推荐）
+
+延时双删伪代码如下：
+
+```java
+public void update(String key, Object data) {
+    // 1. 先删除缓存
+    cache.delete(key);
+    // 2. 再更新数据库
+    db.update(data);
+    // 3. 线程休眠 1 秒
+    sleep(1000);
+    // 4. 删除 1 秒内可能存在的脏数据缓存
+    cache.delete(key);
+}
+```
+
+从代码中我们可以发现，由于休眠的存在，会导致接口吞吐量大幅降低，所以结合 Cache-Aside pattern 方案，我们可以得到一个比较优的方案：
+
+```java
+public void update(String key, Object data) {
+    // 1. 先更新数据库
+    db.update(data);
+    // 2. 再删除缓存
+    cache.delete(key);
+    // 3. 获取延迟时间
+    long delay = config.getDelay();
+    // 4. 异步延迟执行（或延迟队列）
+    sched.schedule(() -> {
+        // 5. 第二次删除缓存
+        cache.delete(key);
+    }, delay, TimeUnit.MILLISECONDS);
+}
+```
+
+延迟双删用比较简洁的方式实现数据库和缓存最终一致性，而不是强一致，因为等待第二次删除缓存期间依旧可能会出现并发问题，而且还要考虑删除缓存失败的场景。
+
+### 订阅 binlog
+
+Redis 服务通过订阅 MySQL binlog 同步所有数据到缓存中。该方案的优点是，所有读请求都可以直接读缓存，不需要再查数据库，性能非常高。
+但缺点也很明显，缓存利用率低，不经常访问的数据，会一直留在缓存中。
 
 ## 分布式锁
+
+### 基本方案（不推荐）
+
+```java
+private void tryLock() {
+    // 判断是否锁获取成功
+    boolean locked = redis.setnx("lock", "1");
+    while (!locked) {
+        // 获取锁失败，等待后重试，或返回错误
+        return;
+    }
+    try {
+        // 如果获取锁成功，处理业务
+        // ...
+    } catch (Exception e) {
+        // 释放锁
+        redis.del("lock");
+    }
+}
+```
+
+该方案存在一个问题：如果业务还未处理完，锁还未被释放时，服务器被重启或发生崩溃，则锁永远无法被自动释放，需要人工介入排查原因。
+
+### 基于时间戳（不推荐）
+
+```java
+private void tryLock() {
+    // 锁超时时间
+    long timeout = 60 * 1000;
+    // 当前时间戳
+    long timestamp = System.currentTimeMillis();
+    // 判断是否锁获取成功
+    boolean locked = redis.setnx("lock", timestamp + timeout + 1);
+    while (!locked) {
+        // 重新获取时间戳
+        timestamp = System.currentTimeMillis();
+        // 如果 GETSET 操作获取的是一个已经过期的时间戳，则说明原锁已过期，并且新锁被当前线程持有
+        long expiration = redis.getset("lock", timestamp + timeout + 1);
+        if (expiration < timestamp) {
+            // 锁已超时，获得锁成功
+            locked = true;
+        } else {
+            // 锁未超时，等待后重试，或返回错误
+        }
+    }
+    try {
+        // 如果获取锁成功，处理业务
+        // ...
+    } catch (Exception e) {
+        // 释放锁
+        redis.del("lock");
+    }
+}
+```
+
+该方案存在一个问题：如果处理业务所需要的时间超出了锁的超时时间，则相当于提前释放了锁，可能造成严重的业务事故。
+如果给锁设置了很长的超时时间，在业务还未处理完，锁还未被释放时，服务器重启或崩溃，则可能造成长时间业务堵塞，需要人工介入排查原因。
+
+### 看门狗（推荐）
+
+```java
+private void tryLock() {
+    // 锁超时时间
+    long timeout = 60 * 1000;
+    // 判断是否锁获取成功（此处可以通过 Lua 脚本实现 SETNX 操作带超时时间）
+    boolean locked = redis.setIfAbsent("lock", "1", timeout, TimeUnit.MILLISECONDS);
+    while (!locked) {
+        // 获取锁失败，等待后重试，或返回错误
+        return;
+    }
+    // 创建看门狗
+    ScheduledExecutorService watchdog = Executors.newSingleThreadScheduledExecutor();
+    try {
+        // 看门狗定时续期
+        watchdog.scheduleAtFixedRate(() -> redisTemplate.expire("lock", timeout, TimeUnit.MILLISECONDS), timeout / 2, timeout / 2, TimeUnit.MILLISECONDS);
+        // 处理业务
+        // ...
+    } finally {
+        watchdog.shutdown();
+        redisTemplate.delete("lock");
+    }
+}
+```
+
+该方案通过 Lua 脚本或 Redis 事务，将`SETNX`操作和`EXPIRE`操作以原子操作执行，如果成功获取锁，则顺便设置了一个较短的超时时间。
+
+通过看门狗给锁续期，可以防止业务还未处理完，锁被提前释放的情况发生。如果业务处理中时，服务器重启或崩溃，则可以通过较短的超时时间自动释放锁，防止业务被长时间阻塞。
 
 ### Redission
 
 ### RedLock
 
-### 看门狗
-
-## 参考链接
-
-- [Redis data types](https://redis.io/docs/manual/data-types/)

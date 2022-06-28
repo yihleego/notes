@@ -663,18 +663,18 @@ Redis Cluster 将所有数据划分为 16384 个 slots（槽位），每个节�
 当客户端来连接集群时，它也会得到一份集群的槽位配置信息并将其缓存在客户端本地。这样当客户端要查找某个 key 时，可以直接定位到目标节点。
 同时因为槽位的信息可能会存在客户端与服务器不一致的情况，还需要纠正机制来实现槽位信息的校验调整。
 
-### 槽位定位算法
+#### 槽位定位算法
 
 Redis Cluster 默认会对 key 值使用 CRC16 算法进行 hash 得到一个整数值，然后用这个整数值对 16384 进行取模来得到具体槽位。
 
 公式：`HASH_SLOT = CRC16(key) % 16384`
 
-### 跳转重定位
+#### 跳转重定位
 
 当客户端向一个错误的节点发出了指令，该节点会发现指令的 key 所在的槽位并不归自己管理，这时它会向客户端发送一个特殊的跳转指令携带目标操作的节点地址，告诉客户端去连这个节点去获取数据。
 客户端收到指令后除了跳转到正确的节点上去操作，还会同步更新纠正本地的槽位映射表缓存，后续所有 key 将使用新的槽位映射表。
 
-### 集群节点间的通信机制
+#### 集群节点间的通信机制
 
 Redis Cluster 节点间采取 Gossip 协议进行通信，主要职责就是信息交换，协议包含多种消息：
 
@@ -684,6 +684,10 @@ Redis Cluster 节点间采取 Gossip 协议进行通信，主要职责就是信�
 - `fail`：当节点判定集群内另⼀个节点下线时，会向集群内⼴播⼀个`fail`消息，其他节点接收到`fail`消息之后把对应节点更新为下线状态
 
 每个节点都有一个专门用于节点间 Gossip 通信的端口，通信端⼝号为服务端⼝上加`10000`，比如：当前 Redis 服务端口号为`6379`，则 Gossip 通信的端口号为`16379`。
+
+### 脑裂
+
+TODO
 
 ## 数据库与缓存双写一致性
 
@@ -796,113 +800,194 @@ private void tryLock() {
     // 通过 SETNX 命令尝试获取锁
     boolean locked = redis.setnx("lock", "1");
     // 判断是否锁获取成功
-    while (!locked) {
+    if (!locked) {
         // 获取锁失败，等待后重试，或返回错误
         return;
     }
     try {
-        // 如果获取锁成功，处理业务
+        // 获取锁成功，处理业务
         // ...
-    } catch (Exception e) {
-        // 释放锁
+    } finally {
+        // 通过 DEL 命令释放锁
         redis.del("lock");
     }
 }
 ```
 
-该方案存在一个问题：如果业务还在处理中，锁还未被释放时，服务器被重启或发生崩溃，则锁永远无法被自动释放，需要人工介入排查原因。
+该方案存在一个问题：如果业务正在处理中时，服务器发生崩溃或被强制重启，会导致锁永远无法被自动释放，此时，需要手动解锁。
 
 ### 设置超时时间方案（不推荐）
 
 ```java
-private void tryLock() {
-    // 锁超时时间
-    long timeout = 5 * 60 * 1000;
-    // 通过 SET key value [EX seconds] [PX milliseconds] NX 命令尝试获取锁，并设置超时时间
-    boolean locked = redis.set("lock", "1", timeout);
+private void tryLock(long timeout) {
+    // 通过 SET key value PX milliseconds NX 命令尝试获取锁，并设置超时时间
+    boolean locked = redis.setnx("lock", "1", timeout);
     // 判断是否锁获取成功
-    while (!locked) {
+    if (!locked) {
         // 获取锁失败，等待后重试，或返回错误
         return;
     }
     try {
-        // 如果获取锁成功，处理业务
+        // 获取锁成功，处理业务
         // ...
-    } catch (Exception e) {
-        // 释放锁
+    } finally {
+        // 通过 DEL 命令释放锁
         redis.del("lock");
     }
 }
 ```
 
-该方案存在一个问题：如果处理业务所需要的时间超出了锁的超时时间，则相当于提前释放了锁，可能造成严重的业务事故。
-如果给锁设置了很长的超时时间，在业务还未处理完，锁还未被释放时，服务器重启或崩溃，则可能造成长时间业务堵塞，需要人工介入排查原因。
+该方案存在一个问题：如何设置一个合适的超时时间，
 
-### 基于时间戳（不推荐）
-
-```java
-private void tryLock() {
-    // 锁超时时间
-    long timeout = 5 * 60 * 1000;
-    // 当前时间戳
-    long timestamp = System.currentTimeMillis();
-    // 判断是否锁获取成功
-    boolean locked = redis.setnx("lock", timestamp + timeout + 1);
-    while (!locked) {
-        // 重新获取时间戳
-        timestamp = System.currentTimeMillis();
-        // 如果 GETSET 操作获取的是一个已经过期的时间戳，则说明原锁已过期，并且新锁被当前线程持有
-        long expiration = redis.getset("lock", timestamp + timeout + 1);
-        if (expiration < timestamp) {
-            // 锁已超时，获得锁成功
-            locked = true;
-        } else {
-            // 锁未超时，等待后重试，或返回错误
-        }
-    }
-    try {
-        // 如果获取锁成功，处理业务
-        // ...
-    } catch (Exception e) {
-        // 释放锁
-        redis.del("lock");
-    }
-}
-```
-
-该方案的问题与[设置超时时间方案](#设置超时时间方案（不推荐）)是一样的。
+- 如果超时时间过短，如果处理业务所需要的时间超出了锁的时间，相当于提前释放了锁，可能会导致严重的业务事故。由于锁已经被提前释放，但是业务处理完成后，依然会去释放锁，此时释放的可能是另一个事务持有的锁。
+- 如果超时时间过长，如果业务正在处理中时，服务器发生崩溃或被强制重启，会导致锁长时间无法被自动释放，此时，需要手动解锁。
 
 ### 看门狗（推荐）
 
+所以，我们期望分布式锁同时具有以下功能：
+
+1. 可以设置超时时间
+2. 服务器崩溃故障时，能在短时间内自动解锁
+3. 只释放自己设置的锁
+
 ```java
-private void tryLock() {
+public void tryLock(long timeout) {
+    // 锁key
+    String lockKey = "lock";
+    // 锁签名
+    String lockSign = UUID.randomUUID().toString();
     // 锁超时时间
-    long timeout = 60 * 1000;
-    // 通过 SET key value [EX seconds] [PX milliseconds] NX 命令尝试获取锁，并设置超时时间
-    boolean locked = redis.set("lock", "1", timeout);
+    long lockTimeout = 10 * 1000;
+    // 通过 SET key value PX milliseconds NX 命令尝试获取锁，并设置超时时间
+    boolean locked = redis.set(lockKey, lockSign, lockTimeout);
     // 判断是否锁获取成功
-    while (!locked) {
+    if (!locked) {
         // 获取锁失败，等待后重试，或返回错误
         return;
     }
-    // 创建看门狗
-    ScheduledExecutorService watchdog = Executors.newSingleThreadScheduledExecutor();
+    Watchdog watchdog = null;
     try {
-        // 看门狗定时续期
-        watchdog.scheduleAtFixedRate(() -> redisTemplate.expire("lock", timeout, TimeUnit.MILLISECONDS), timeout / 2, timeout / 2, TimeUnit.MILLISECONDS);
+        // 续期间隔（必须小于锁超时时间）
+        long period = lockTimeout / 2;
+        // 累计持续时间，如果业务超时时间，则停止续期
+        long duration = 0;
+        // 启动看门狗，定时对锁续期
+        watchdog = schedule(period, () -> {
+            if ((duration += period) < timeout) {
+                redis.expire(lockKey, lockTimeout);
+            }
+        });
         // 处理业务
         // ...
     } finally {
-        watchdog.shutdown();
-        redisTemplate.delete("lock");
+        // 停止看门狗
+        if (watchdog != null) {
+            watchdog.cancel();
+        }
+        // 通过 Lua 脚本原子性操作的特性释放锁
+        // 先获取锁签名，如果相等则释放锁
+        String script = """
+                if redis.call("get",KEYS[1]) == ARGV[1] then
+                    return redis.call("del",KEYS[1]) > 0
+                else
+                    return false
+                end""";
+        String[] keys = {lockKey};
+        String[] args = {lockSign};
+        redis.lua(script, keys, args);
     }
 }
 ```
 
-该方案在获取锁的同时，顺便设置了一个较短的超时时间，通过看门狗给锁续期，可以防止业务还未处理完，锁被提前释放的情况发生。
-如果业务处理中时，服务器重启或崩溃，则可以通过较短的超时时间自动释放锁，防止业务被长时间阻塞。
+该方案在获取锁的同时，生成了一个签名，并设置了一个较短的超时时间，通过看门狗给锁续期，可以防止业务还未处理完，锁被提前释放的情况发生。
+如果业务正在处理中时，服务器发生崩溃或被强制重启，由于超时时间较短，锁会被快速地自动释放，所以不会影响后续业务。
+如果业务处理完成，会先获取锁的签名，如果签名一致，说明该锁被当前事务持有，再进行释放锁；如果不一致，说明当前业务可能已经超时，锁正在被其他事务持有，此时，不可以释放锁。
 
-### Redission
+### Redission（推荐）
 
-### RedLock
+TODO
 
+### Redlock（官方推荐）
+
+[The Redlock Algorithm](https://redis.io/docs/reference/patterns/distributed-locks/#the-redlock-algorithm)
+
+实现 Redlock 需要要在不同机器上部署多个 Redis 实例，官方案例中为 5 个。
+一个客户端要获取锁有 5 个步骤：
+
+1. 客户端获取当前毫秒级的时间戳`T1`
+2. 使用相同的`key`和`value`顺序尝试从 N 个 Redis 实例上获取锁。
+   每个请求都设置一个超时时间（毫秒级别），该超时时间要远小于锁的有效时间，这样便于快速尝试与下一个实例发送请求。
+   比如锁的自动释放时间 10 秒，则请求的超时时间可以设置 5~50 毫秒内，这样可以防止客户端长时间阻塞。
+3. 客户端获取当前时间`T2`并减去`T1`来计算出获取锁所用的时间`T3 = T2 -T1`。当且仅当客户端在大多数实例（`N / 2 + 1`）获取成功，且获取锁所用的总时间`T3`小于锁的有效时间，才认为加锁成功，否则加锁失败。
+4. 如果加锁成功，则执行业务逻辑操作共享资源，`key`的真正有效时间等于有效时间减去获取锁所使用的时间。
+5. 如果因为某些原因，获取锁失败（没有在至少`N / 2 + 1`个Redis实例取到锁或者取锁时间已经超过了有效时间），客户端应该在所有的 Redis 实例上进行解锁（即便某些 Redis 实例根本就没有加锁成功）。
+
+部署实例的数量要求是奇数，为了能很好的满足过半原则，如果有 6 个实例，则需要从 4 个实例成功取锁才能认为成功，所以奇数更合理。
+
+最后释放锁的时候，作者在算法描述中特别强调，客户端应该向所有实例发起释放锁的操作。也就是说，即使当时向某个实例获取锁没有成功，在释放锁的时候也不应该漏掉这个实例。
+这是为什么呢？设想这样一种情况，客户端向某个实例申请获取锁，而且这个实例也成功执行了`SET`操作，但是它返回给客户端的响应包却丢失了。
+这在客户端看来，获取锁的请求由于超时而失败了，但在 Redis 这边看来，加锁已经成功了。因此，释放锁的时候，客户端也应该对当时获取锁失败的那些实例同样发起请求。
+实际上，这种情况在异步通信模型中是有可能发生的，客户端向服务器通信是正常的，但反方向却是有问题的。
+
+## 线程模型
+
+Redis 使用文件事件处理器（file event handler）处理文件事件，文件事件处理器是基于 Reactor 模式实现的网络通信程序，其主要包含四个部分：套接字、I/O 多路复用程序、文件事件分派器、事件处理器。
+
+![redis_fileeventhandler](images/redis_fileeventhandler.png)
+
+I/O 多路复用技术的底层实现主要通过包装常见的`select`、`epoll`、`evport`和`kqueue`等 I/O 多路复用函数库来实现。
+程序会在编译时自动选择系统中性能最高的 I/O 多路复用函数库作为底层实现。
+
+![redis_iomultiplexing](images/redis_iomultiplexing.png)
+
+### Redis 6.0 之前的版本 单线程模型
+
+Redis 6.0 之前的版本是单线程模型，是指处理套接字、解析、执行等过程都由一个顺序串行的主线程处理，但是对于持久化，主动同步，大key处理，数据过期等功能都是其他线程完成。
+
+其中执行命令阶段，由于 Redis 是单线程来处理命令的，所有每一条到达服务端的命令不会立刻执行，所有的命令都会进入一个 Socket 队列中，当 Socket 可读则交给单线程事件分发器逐个被执行。
+
+### Redis 6.0 之后的版本 引入多线程
+
+Redis 将所有数据放在内存中，内存的响应时长大约为100纳秒，对于小数据包，Redis 服务器可以处理 80,000 到 100,000 QPS，这也是 Redis 处理的极限了，对于大部分公司来说，单线程的Redis已经足够使用了。
+
+但随着越来越复杂的业务场景，有些公司动不动就上亿的交易量，因此需要更大的并发量。常见的解决方案是在分布式架构中对数据进行分区并采用多个服务器，但该方案有非常大的缺点，
+例如要管理的 Redis 服务器太多，维护代价大；某些适用于单个 Redis 服务器的命令不适用于数据分区；数据分区无法解决热点读写问题；数据偏斜，重新分配和放大缩小变得更加复杂等等。
+
+从 Redis 自身角度来说，因为读写网络的read/write系统调用占用了执行期间大部分 CPU 时间，瓶颈主要在于网络的 IO 消耗, 优化主要有两个方向:
+
+- 提高网络 IO 性能
+- 使用多线程充分利用多核
+
+#### 并发问题
+
+![redis_iothreads](images/redis_iothreads.png)
+
+从上面的实现机制可以看出，Redis的多线程部分只是用来处理网络数据的读写和协议解析，执行命令仍然是单线程顺序执行，所以没有并发安全问题。
+
+#### 启用 IO 多线程
+
+默认情况下，IO 多线程是禁用的，需要修改`redis.conf`配置文件的`io-threads-do-reads`选项为`yes`。
+
+```text
+# Setting io-threads to 1 will just use the main thread as usual.
+# When I/O threads are enabled, we only use threads for writes, that is
+# to thread the write(2) syscall and transfer the client buffers to the
+# socket. However it is also possible to enable threading of reads and
+# protocol parsing using the following configuration directive, by setting
+# it to yes:
+#
+io-threads-do-reads yes
+```
+
+除了启用 IO 多线程，还需要设置 IO 线程数。
+如果 CPU 是 4 核的，建议设置为 2 或 3 个线程。
+如果 CPU 是 8 核的，建议设置为 6 个线程。
+总之，线程数应该要小于 CPU 核心数。
+
+```text
+# So for instance if you have a four cores boxes, try to use 2 or 3 I/O
+# threads, if you have a 8 cores, try to use 6 threads. In order to
+# enable I/O threads use the following configuration directive:
+#
+io-threads 4
+```

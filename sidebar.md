@@ -15,9 +15,9 @@
     - [Spring Boot 🌧️](docs/springboot.md)
     - [Spring Cloud 🌧️](docs/springcloud.md)
     - [Netty 🌧️](docs/netty.md)
-    - [mybatis 🌧️](docs/mybatis.md)
     - [Vert.x 🌧️](docs/vertx.md)
     - [Dubbo 🌧️](docs/dubbo.md)
+    - [MyBatis 🌧️](docs/mybatis.md)
 - Databases
     - [MySQL ☀️](docs/mysql.md)
         - [InnoDB](docs/mysql_innodb.md)

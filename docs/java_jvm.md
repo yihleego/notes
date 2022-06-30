@@ -159,11 +159,421 @@ Java 是一门面向对象的编程语言，Java 程序运行过程中无时无�
 
 ## GC
 
-### CMS
+### 引用类型
 
-### G1
+Java 中有四种引用类型，分别是：强引用、软引用、弱引用、虚引用。针对不同的引用类型，GC的回收策略不同。
 
-### ZGC
+#### 强引用
+
+如果存在任意一个强引用，被引用的对象就不会被垃圾回收。
+
+Java 中的引用默认就是强引用，任何一个对象的赋值操作就产生了对这个对象的强引用。
+
+```java
+Object obj = new Object();
+```
+
+通过`new`关键字创建了一个对象，并将其赋值给`obj`，该`obj`对`new Object()`有强引用。
+
+#### 软引用
+
+如果只存在软引用，在内存不足的情况下，被引用的对象才会被回收。
+
+Java 中软引用通过`java.lang.ref.SoftReference`类实现。
+
+```java
+public class SoftReference<T> extends Reference<T> {
+    private static long clock;
+    private long timestamp;
+
+    public SoftReference(T referent) {
+        super(referent);
+        this.timestamp = clock;
+    }
+
+    public SoftReference(T referent, ReferenceQueue<? super T> q) {
+        super(referent, q);
+        this.timestamp = clock;
+    }
+
+    public T get() {
+        T o = super.get();
+        if (o != null && this.timestamp != clock)
+            this.timestamp = clock;
+        return o;
+    }
+}
+```
+
+示例代码：
+
+```java
+Object obj = new Object();
+SoftReference<Object> sr = new SoftReference<>(obj);
+obj = null;
+System.out.println(sr.get() != null); // output true
+System.gc();
+System.out.println(sr.get() != null); // uncertain
+```
+
+内存充足时，软引用对象不会被回收，调用`System.gc()`方法后会输出`true`。
+
+内存不足时，软引用对象会被回收，调用`System.gc()`方法后会输出`false`。
+
+#### 弱引用
+
+如果只存在弱引用，在垃圾回收时，被引用的对象就会被回收。
+
+Java 中弱引用通过`java.lang.ref.WeakReference`类实现。
+
+```java
+public class WeakReference<T> extends Reference<T> {
+    public WeakReference(T referent) {
+        super(referent);
+    }
+
+    public WeakReference(T referent, ReferenceQueue<? super T> q) {
+        super(referent, q);
+    }
+}
+```
+
+示例代码：
+
+```java
+Object obj = new Object();
+WeakReference<Object> wr = new WeakReference<>(obj);
+obj = null;
+System.out.println(wr.get() != null); // output true
+System.gc();
+System.out.println(wr.get() != null); // output false
+```
+
+上述代码中，调用`System.gc()`方法后对象就会被回收。
+
+#### 虚引用
+
+虚引用的作用是跟踪垃圾收集器收集对象的活动，在垃圾回收时，如果发现只存在虚引用，则会将引用放到`ReferenceQueue`中，由开发者自己处理。
+当开发者调用`ReferenceQueue.poll()`方法将虚引用移除之后，引用会变成`Inactive`状态，意味着被引用的对象可以被回收了。
+
+```java
+public class PhantomReference<T> extends Reference<T> {
+    public T get() {
+        return null;
+    }
+
+    @Override
+    boolean refersToImpl(T obj) {
+        return refersTo0(obj);
+    }
+
+    @IntrinsicCandidate
+    private native boolean refersTo0(Object o);
+
+    public PhantomReference(T referent, ReferenceQueue<? super T> q) {
+        super(referent, q);
+    }
+}
+```
+
+示例代码：
+
+```java
+Object obj = new Object();
+ReferenceQueue<Object> queue = new ReferenceQueue<>();
+PhantomReference<Object> pr = new PhantomReference<>(obj, queue);
+obj = null;
+System.out.println(pr.get() != null); // always false
+System.gc();
+Reference<?> r = queue.poll();
+System.out.println(r != null);        // output true
+```
+
+### 可达性分析
+
+Java 是通过判断一个对象是否可触及，以及一个对象的引用类型（强引用、软引用、弱引用、虚引用）来决定是否回收这个对象。
+
+判断是否可触及包含两个要素：
+
+- 通过可达性分析该对象到GC Root不可达，如果不可达会进行第一次标记。
+- 已经丧失"自救"机会，如果没有自救机会，会进行第二次标记，此时该对象可回收。
+
+#### GC Roots
+
+可达性分析法定义了一系列称为 GC Roots 的对象作为起始点，从这个起点开始向下搜索，每一条可达路径称为引用链，当一个对象没有任意一条引用链可以到达 GC Roots 时，那么就对这个对象进行第一次可回收标记。
+
+可以作为 GC Roots 的对象括如下几种：
+
+- 方法中的局部变量
+- 静态变量
+- 常量
+- 本地方法栈中引用的对象
+- 已启动且未停止的线程
+
+#### 对象自救
+
+一个被可达性分析标记为可回收的对象，是有机会进行自救的，需要重写`Object`类的`finalize()`方法，将当前对象的引用再次赋值给某一变量。
+
+但是每个对象的`finalize()`方法只会被系统调用一次，也就是说，如果对象进行自救过一次，并且进入到了下一轮的回收流程，则`finalize()`方法不会被再次调用，而只能被回收。
+
+### GC 算法
+
+#### 引用计数法 Reference counting
+
+引用计数法是最简单的垃圾回收算法，此算法会在每一个对象上记录这个对象被引用的次数，每当有一个引用指向该对象时，计数器加`1`。每当有一个指向它的引用被取消时，计数器减`1`。
+当没有引用指向该对象时，即计数器为`0`，此时就可以对该对象进行垃圾回收操作。
+
+优点：
+
+- 实现简单
+- 计数器操作分散
+- 幽灵时间短（幽灵时间指对象死亡到回收的这段时间，处于幽灵状态）
+
+缺点：
+
+- 需要解决循环引用的问题，否则会发生内存泄漏。
+- 计数器操作会带来一定的性能开销。
+
+#### 标记-清除算法 Mark-Sweep
+
+标记-清除算法的执行过程分为两个阶段：
+
+1. 标记阶段：通过可达性分析将不可达的对象标记出来。
+2. 清除阶段：将标记阶段标记的垃圾对象清除。
+
+这里所谓的清除并不是真的置空，而是把需要清除的对象地址维护到空闲列表里。下次有新对象需要加载时，判断垃圾的位置空间是否够，如果够，就存放覆盖原有的地址。
+
+标记-清除算法最大的缺陷，回收后会产生大量不连续的内存空间，即内存碎片。由于 Java 在分配内存时通常是按连续内存分配，那么当碎片空间不足以分配给新的对象时，就造成了内存浪费。
+
+优点：
+
+- 相比于引用计数法，标记—清除算法中每个对象的引用只需要找到一个就可以判断它为活着的。
+
+缺点：
+
+- 标记阶段、清除阶段两个过程的效率都不高。
+- 这种方式清理出来的空闲内存是不连续的，利用率低，产生内存碎片，需要维护一个空闲列表。
+- 幽灵时间长，即从对象死亡到对象被回收之间的时间过长。
+
+#### 复制算法 Copying
+
+复制算法会将内存空间分为两块，每次只使用其中一块内存。复制算法同样使用可达性分析法标记除垃圾对象，当垃圾回收时，会将存活的对象复制到另一块内存空间中，并且保证内存上的连续性，然后直接清空之前使用的内存空间。然后如此往复。
+
+优点：
+
+- 相比于标记-清除算法，解决了内存碎片的问题。
+- 内存分配高效，通过指针的偏移量直接追加到连续内存空间的末尾。
+
+缺点：
+
+- 可使用的内存空间只有原来的一半。
+
+#### 标记-压缩算法 Mark-Compact
+
+标记-压缩算法可以解决标记-清除算法的内存碎片问题，执行过程分为三个阶段：
+
+1. 和标记-清除算法相似，从根节点开始标记所有被引⽤的对象。
+2. 将所有的存活对象压缩到内存的⼀端，按顺序排放。
+3. 清理边界所有的空间
+
+标记-压缩算法的最终效果等同于标记-清除算法执⾏完成后，再进⾏⼀次内存碎⽚整理，因此，也可以把它称为标记-清除-压缩（Mark-Sweep-Compact）算法。
+
+标记的存活对象将会被整理，按照内存地址依次排列，⽽未被标记的内存会被清理掉。如此⼀来，当我们需要给新对象分配内存时，JVM 只需要持有⼀个内存的起始地址即可，这⽐维护⼀个空闲列表显然少了许多开销。
+
+指针碰撞（Bump the Pointer）：如果内存空间以规整和有序的⽅式分布，即已⽤和未⽤的内存都各⾃⼀边，彼此之间维系着⼀个记录下⼀次分配起始点的标记指针，当为新
+对象分配内存时，只需要通过修改指针的偏移量将新对象分配在第⼀个空闲内存位置上，这种分配⽅式就叫做指针碰撞。
+
+优点：
+
+- 相比于标记-清除算法，解决了内存碎片的问题。
+- 相比于复制算法，没有内存减半的⾼额代价。
+- 内存分配高效，通过指针的偏移量直接追加到连续内存空间的末尾。
+
+缺点：
+
+- 从效率上来说，要低于复制算法。
+- 移动对象的同时，如果对象被其它对象引⽤，则还需要调整引⽤的地址。
+
+#### 分代算法 Generational
+
+分代算法将内存区域分为两部分：新生代和老年代。根据新生代和老年代中对象的不同特点，使用不同的GC算法。
+
+新生代的特点是：创建出来没多久就可以被回收（例如虚拟机栈中创建的对象，方法出栈就会销毁）。也就是说，每次回收时，大部分是垃圾对象，所以新生代适用于复制算法。
+
+老年代的特点是：经过多次GC，依然存活。也就是说，每次GC时，大部分是存活对象，所以老年代适用于标记-压缩算法。
+
+##### 名词解释
+
+- Partial GC：局部垃圾回收，细分如下：
+    - Young GC：也叫 Minor GC ，收集新生代
+    - Old GC：收集老年代，只有 CMS 的`concurrent collection`是这个模式
+    - Mixed GC：收集整个新生代和部分老年代，只有 G1 有这个模式
+- Full GC：收集所有区域，包括新生代、老年代、永久代（Java 8之前）
+- Major GC：是一个容易混淆的概念，既可以指 Old GC ，也可以指 Full GC ，如果听到有人说 Major GC ，需要先确认是 Old GC 还是 Full GC
+
+##### 新生代
+
+新生代分为 Eden 区、 From 区和 To 区。
+
+新创建的对象总是在 Eden 区中出生，当 Eden 区满时，会触发 Minor GC，此时会将 Eden 区中的存活对象复制到 From 区和 To 区其中一个没有被使用的空间中。
+假设是将 Eden 区中存活对象复制到 To 区，同时 From 区中的存活对象也会被复制到 To 区中，此时 Eden 区和 From 区都是垃圾对象，可以直接清除。
+
+有几种情况，对象会晋升到老年代：
+
+- 超大对象会直接进入到老年代（可通过虚拟机参数`-XX:PretenureSizeThreshold`配置，默认值0，即不开启，单位为`byte`）
+- 如果 To 区已满，多出来的对象会直接晋升老年代
+- 复制 15 次后，依然存活的对象会进入老年代（每个对象的年龄是存在对象头中的，使用`4-bit`空间表示年龄数，`4-bit`整数可表示十进制最大值为 15）
+
+在进行 Minor GC 之前，JVM 会检查新生代所有对象使用的总内存是否小于老年代最大剩余连续内存。
+
+- 如果上述条件成立，那么这次`Minor GC`一定是安全的，因为即使所有新生代对象都进入老年代，老年代也不会内存溢出。
+- 如果上述条件不成立，JVM 会检查`-XX:HandlePromotionFailure`是否开启。
+    - 如果没开启，说明`Minor GC`后可能会存在老年代内存溢出的风险，会进行 Full GC。
+    - 如果开启，JVM 还会检查历次晋升老年代对象的平均大小是否小于老年代最大连续内存空间，如果成立，会尝试直接进行 Minor GC ，如果不成立，则进行 Full GC。
+
+`-XX:HandlePromotionFailure`：只要老年代的连续空间大于新生代对象的总大小或者历次晋升到老年代的对象的平均大小就进行 Minor GC ，否则进行 Full GC 。Java 7 及以后这个参数就失效了。
+
+##### 老年代
+
+老年代是一整块内存空间。
+
+新生代的对象可能被老年代引用，而这种情况可达性分析是分析不到的，但这种情况的新生代对象是不应该被回收的。
+JVM 使用了卡标记（Card Marking）来解决老年代到新生代的引用问题，使用卡表（Card Table）和写屏障（Write Barrier）来进行标记并加快对 GC Roots 的扫描。
+
+通过卡表（Card Table）将老年代分成若干小块，标识出老年代的哪一块内存会存在跨代引用。此后当发生`Minor GC`时，只有包含了跨代引用的小块内存里的对象才会被加到 GC Roots 进行扫描。
+虽然这种办法需要在对象改变引用关系（如将自己或者某个属性赋值）时维护记录数据的正确性，会增加一些运行时的开销，但比起收集时扫描整个老年代来说仍是划算的。
+
+### 垃圾收集器
+
+![java_jvm_gc.png](java_jvm_gc.png)
+
+#### Serial（新生代）
+
+Serial 最古老的垃圾收集器，它是采用复制算法的新生代收集器，曾经（JDK 1.3.1 之前）是虚拟机新生代收集的唯一选择。
+
+它是一个单线程收集器，与应用程序线程是串行执行的，也就是说，在垃圾回收期间，会暂停所有应用程序线程，即`Stop-The-World`。
+
+可以通过`-XX:+UseSerialGC`命令启动。
+
+#### ParNew（新生代）
+
+ParNew 是 Serial 的多线程版本，它也是一个新生代收集器。除了使用多线程进行垃圾收集外，其他行为与 Serial 相同，两者共用了相当多的代码。
+
+但它却是许多运行在 Server 模式下的虚拟机中首选的新生代收集器，除了 Serial 外，目前只有它能和CMS GC 配合使用。
+
+#### Parallel Scavenge（新生代）
+
+Parallel Scavenge 也是一个并行的多线程新生代收集器，它也使用复制算法。
+它的关注点与其他收集器不同，CMS 等收集器的关注点是尽可能缩短垃圾收集时用户线程的停顿时间，而它的目标是达到一个可控制的吞吐量。
+
+停顿时间越短就越适合需要与用户交互的程序，良好的响应速度能提升用户体验。而高吞吐量则可以高效率地利用CPU时间，尽快完成程序的运算任务，主要适合在后台运算而不需要太多交互的任务。
+
+另外值得注意的一点是，Parallel Scavenge 无法与 CMS 配合使用，在 Java 6 版本推出 Parallel Old 之前，如果新生代选择 Parallel Scavenge，老年代只有 Serial Old 能与之配合使用。
+
+在 Java 6 版本后，默认情况下，新生代收集器使用 Parallel Scavenge，老年代收集器使用 Parallel Old。
+
+#### Serial Old（老年代）
+
+Serial Old 是 Serial 的老年代版本，使用标记-压缩算法。与 Serial 相同的是，它也串行执行的。
+
+#### Parallel Old（老年代）
+
+Parallel Old 是 Parallel Scavenge 的老年代版本，使用的是标记-压缩算法。这个收集器是从 Java 6 才开始提供的，在此之前，如果新生代选择了 Parallel Scavenge，老年代除了 Serial Old 以外别无选择，
+所以在Parallel Old诞生以后，“吞吐量优先”的收集器终于有了比较名副其实的应用组合，在注重吞吐量以及 CPU 资源敏感的场合，都可以优先考虑 Parallel Scavenge 配合 Parallel Old 使用。
+
+#### CMS（老年代）
+
+CMS（Concurrent Mark Sweep）是 Java 5 推出的一个具有划时代意义的垃圾收集器。
+它基于标记-清除算法实现，是以获取最短回收停顿时间为目标设计的老年代收集器。它非常符合那些集中在互联网站或者 B/S 系统的服务端上的应用。
+
+CMS 可以配合 Serial 和 ParNew 一起使用，当并行模式失败时 CMS 会退化成 Serial Old。
+
+工作流程主要由 7 个阶段组成：初始化标记、并发标记、并发预清理、可中止的并发预清理、重新标记、并发清理、并发重置。
+
+由于整个过程中耗时最长的阶段是并发标记和并发清除，收集器线程都可以与用户线程一起工作。
+所以，从总体上来说，CMS 垃圾收集过程是与用户线程一起并发执行的。
+
+##### 1. 初始标记 Initial Mark
+
+初始化标记阶段，是第一个阶段，也是标记阶段的开始，主要工作是标记可直达的存活对象。
+
+主要标记过程:
+
+1. 从 GC Roots 遍历可直达的老年代对象
+2. 遍历被新生代存活对象所引用的老年代对象
+
+标记过程支持单线程或并行，在过程中，会暂停所有应用程序线程，即`Stop-The-World`。
+
+![java_jvm_gc_cms_initialmark](images/java_jvm_gc_cms_initialmark.png)
+
+##### 2. 并发标记 Concurrent Mark
+
+并发标记阶段的主要工作是，通过遍历初始标记阶段标记出来的存活对象，继续递归遍历老年代，并标记可直接或间接到达的所有老年代存活对象。
+
+![java_jvm_gc_cms_concurrentmark.png](images/java_jvm_gc_cms_concurrentmark.png)
+
+并发标记阶段，在初始标记阶段被暂停的应用线程将恢复运行，即 GC 线程会和应用程序线程并行执行。因此可能产生新的对象或对象关系发生变化，例如：
+
+- 新生代的对象晋升到老年代
+- 直接在老年代分配对象
+- 老年代对象的引用关系发生变更
+
+对于这些对象，需要重新标记以防止被遗漏。为了提高重新标记的效率，本阶段会把这些发生变化的对象所在的 Card 标识为 Dirty，这样后续就只需要扫描这些 Dirty Card 的对象，从而避免扫描整个老年代。
+
+##### 3. 并发预清理 Concurrent Preclean
+
+在并发预清洗阶段，将会重新扫描并发标记阶段标记的 Dirty Card 对象，并标记被 Dirty Card 对象直接或间接引用的对象，然后清除 Card 标识。
+
+标记被 Dirty Card 对象直接或间接引用的对象：
+
+![java_jvm_gc_cms_concurrentpreclean_dirtycard.png](images/java_jvm_gc_cms_concurrentpreclean_dirtycard.png)
+
+清除 Card 的标识：
+
+![java_jvm_gc_cms_concurrentpreclean_dirtycard_clean.png](images/java_jvm_gc_cms_concurrentpreclean_dirtycard_clean.png)
+
+##### 4. 可中止的并发预清理 Concurrent Abortable Preclean
+
+可中止的并发预清理阶段尽可能承担更多的并发预处理工作，从而降低在重新标记阶段的`Stop-The-World`的时间。
+
+在该阶段，主要循环的做两件事：
+
+- 处理 From 区和 To 区的对象，标记可达的老年代对象
+- 和并发预清理阶段一样，扫描处理 Dirty Card 中的对象
+
+具体执行多久，取决于许多因素，满足其中一个条件将会中止运行：
+
+- 执行循环次数达到了阈值
+- 执行时间达到了阈值
+- 新生代 Eden 区的内存使用率达到了阈值
+
+##### 5. 重新标记 Remark
+
+预清理阶段中，并不一定是所有存活对象都会被标记，因为在并发标记的过程中对象及其引用关系还在不断变化中。
+
+因此，重新标记阶段会通过`Stop-The-World`来完成最后的标记工作，重新扫描之前并发处理阶段的所有残留更新对象。
+
+主要工作：
+
+- 遍历新生代对象，重新标记
+- 根据 GC Roots，重新标记
+- 遍历老年代的 Dirty Card，重新标记
+
+##### 6. 并发清理 Concurrent Sweep
+
+并发清理阶段，主要工作是清理所有未被标记的死亡对象，回收被占用的空间。
+
+![java_jvm_gc_cms_concurrentsweep.png](images/java_jvm_gc_cms_concurrentsweep.png)
+
+##### 7. 并发重置 Concurrent Reset
+
+并发重置阶段，将清理并恢复在 CMS 垃圾收集过程中的各种状态，重新初始化 CMS 相关数据结构，为下一个垃圾收集周期做好准备。
+
+#### Garbage First
+
+#### ZGC
+
+#### Shenandoah
 
 ## 类加载器
 
@@ -418,7 +828,7 @@ public static void main(String[] args) {
 
 上述代码创建了一亿对随机大小的矩形，并去计算有多少对是大小一样的。每次迭代都会创建一对新的矩形，你可能会认为一共创建2亿个`Rect`对象。
 
-经过逃逸分析后发现这些对象不会发生逃逸，则这些不会在堆上分配空间，而是在栈上分配内存，对象所占用内存空间随栈帧出栈而释放，因此它们也不需要通过垃圾回收器来回收。
+经过逃逸分析后发现这些对象不会发生逃逸，则这些不会在堆上分配空间，而是在栈上分配内存，对象所占用内存空间随栈帧出栈而释放，因此它们也不需要通过垃圾收集器来回收。
 
 ### 标量替换
 

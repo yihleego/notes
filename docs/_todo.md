@@ -1,4 +1,3 @@
-Java > 动态代理 示例
 Spring 原理
 Spring MVC 原理
 Spring Boot 原理

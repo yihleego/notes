@@ -1049,7 +1049,7 @@ I/O 多路复用技术的底层实现主要通过包装常见的`select`、`epol
 
 ### Redis 6.0 之前的版本 单线程模型
 
-Redis 6.0 之前的版本是单线程模型，是指处理套接字、解析、执行等过程都由一个顺序串行的主线程处理，但是对于持久化，主动同步，大key处理，数据过期等功能都是其他线程完成。
+Redis 6.0 之前的版本是单线程模型，是指处理套接字、解析、执行等过程都由一个顺序串行的主线程处理，但是对于持久化，主动同步，大 key 处理，数据过期等功能都是其他线程完成。
 
 其中执行命令阶段，由于 Redis 是单线程来处理命令的，所有每一条到达服务端的命令不会立刻执行，所有的命令都会进入一个 Socket 队列中，当 Socket 可读则交给单线程事件分发器逐个被执行。
 
@@ -1096,3 +1096,68 @@ io-threads-do-reads yes
 # enable I/O threads use the following configuration directive:
 io-threads 4
 ```
+
+## 问题排查
+
+### Big Keys
+
+Big Keys 顾名思义是`value`占用的内存空间比较大的`key`。在实际业务中，Big Keys 的判定仍然需要根据 Redis 的实际使用场景、业务场景来进行综合判断。
+
+#### 影响
+
+1. 性能影响：因为 Redis 单线程的工作机制，主线程处理所有`key`的增删改查。对 Big Keys 的操作耗时增加将阻塞主线程处理其他业务请求，进而影响整体吞吐量。
+2. 带宽影响：例如：单个`key`为`10MB`，如果每秒`100`次查询，则会占用`1000MB`的带宽，即便现在大部分是万兆网卡，业务请求量再大一些，网卡也有被打满的风险。
+3. 数据倾斜：对于 Redis 集群来说，Big Keys 会导致单个分片数据量远大于其他节点，整体不均衡。如果一个分片空间容量满了，对系统造成不可访问，而且也不能随意扩容，因为不拆分`key`的情况下扩容，单个分片还是存在数据倾斜。
+4. 主从同步影响：TODO。
+
+#### 排查
+
+`redis-cli`提供了`--bigkeys`命令来查找 Big Keys，例如：
+
+```text
+$ redis-cli --bigkeys
+
+# Scanning the entire keyspace to find biggest keys as well as
+# average sizes per key type.  You can use -i 0.01 to sleep 0.01 sec
+# per SCAN command (not usually needed).
+
+[00.00%] Biggest string found so far 'key-419' with 3 bytes
+[05.14%] Biggest list   found so far 'mylist' with 100004 items
+[35.77%] Biggest string found so far 'counter:__rand_int__' with 6 bytes
+[73.91%] Biggest hash   found so far 'myobject' with 3 fields
+
+-------- summary -------
+
+Sampled 506 keys in the keyspace!
+Total key length in bytes is 3452 (avg len 6.82)
+
+Biggest string found 'counter:__rand_int__' has 6 bytes
+Biggest   list found 'mylist' has 100004 items
+Biggest   hash found 'myobject' has 3 fields
+
+504 strings with 1403 bytes (99.60% of keys, avg size 2.78)
+1 lists with 100004 items (00.20% of keys, avg size 100004.00)
+0 sets with 0 members (00.00% of keys, avg size 0.00)
+1 hashs with 3 fields (00.20% of keys, avg size 3.00)
+0 zsets with 0 members (00.00% of keys, avg size 0.00)
+```
+
+执行命令后，会返回每种数据类型的最占空间的`key`，同时给出了每种数据类型的键值个数以及平均大小。
+
+`--bigkeys`命令排查问题非常方便，但是在使用它时候也有几点需要注意:
+
+- 最好在从节点执行，因为`--bigkeys`是通过`scan`完成的。
+- 最好在节点本机执行，这样可以减少网络开销。
+- 如果没有从节点，可以使用`--i`参数，例如：`--i 0.1`，代表100毫秒执行一次
+- `--bigkeys`命令只能计算每种数据结构的最占空间的`key`，如果有些数据结构非常多的 Big Keys，则无法一次性排查。
+
+#### 解决
+
+- 字符串：字符串类型的`key`，通常要在业务层面将`value`的大小控制在`10KB`左右，如果超过该值可以将字符串切分成多个`key`，或者压缩`value`。
+- 集合：将一个大的集合类型的key拆分成若干小集合。
+
+_Redis 4.0 新添加了`UNLINK`命令用于执行 Big Keys 异步删除。_
+
+### Hot Keys
+
+TODO

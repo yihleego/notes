@@ -1,8 +1,100 @@
 # Spring
 
-## IoC
+## IoC Inversion of Control
 
-## AOP
+控制反转把传统上由程序代码直接操控的对象的调用权交给容器，通过容器来实现对象组件的装配和管理。
+所谓的“控制反转”概念就是对组件对象控制权的转移，从程序代码本身转移到了外部容器。Spring IoC 容器负责管理对象生命周期，通过依赖注入（DI）实现。
+
+## AOP Aspect Oriented Programming
+
+OOP（Object Oriented Programming）面向对象编程，允许开发者定义纵向的关系，但并不适用于定义横向的关系，可能会导致大量代码的重复，而不利于各个模块的重用。
+
+AOP（Aspect-Oriented Programming）面向切面编程，作为面向对象的一种补充，用于将那些与业务无关，但却对多个对象产生影响的公共行为和逻辑，
+抽取并封装为一个可重用的模块，这个模块被命名为“切面”（Aspect），减少系统中的重复代码，降低了模块间的耦合度，同时提高了系统的可维护性。可用于权限认证、日志、事务处理等。
+
+AOP 实现的关键在于代理模式，AOP 代理主要分为静态代理和动态代理。静态代理的代表为 AspectJ，动态代理则以 Spring AOP 为代表。
+
+- AspectJ 是静态代理的增强，所谓静态代理，就是 AOP 框架会在编译阶段生成 AOP 代理类，因此也称为编译时增强，他会在编译阶段将切面织入到 Java 字节码中，运行的时候就是增强之后的AOP对象。
+- Spring AOP 使用的动态代理，所谓的动态代理就是说 AOP 框架不会去修改字节码，而是每次运行时在内存中临时为方法生成一个 AOP 对象，这个 AOP 对象包含了目标对象的全部方法，并且在特定的切点做了增强处理，并回调原对象的方法。
+  Spring AOP 中的动态代理主要有两种方式，JDK 动态代理和 CGLIB 动态代理：
+    - JDK 动态代理只提供接口的代理，不支持类的代理。核心`InvocationHandler`接口和`Proxy`类，`InvocationHandler`接口通过`invoke()`方法反射来调用目标类中的代码，动态地将横切逻辑和业务编织在一起。`Proxy`类利用`InvocationHandler`动态创建一个符合某一接口的的实例, 生成目标类的代理对象。
+    - CGLIB 是一个代码生成的类库，可以在运行时动态的生成指定类的一个子类对象，并覆盖其中特定方法并添加增强代码。CGLIB 是通过继承的方式做的动态代理，因此如果某个类被标记为`final`，那么它是无法使用 CGLIB 做动态代理的。
+
+静态代理与动态代理区别在于生成代理对象的时机不同，相对来说 AspectJ 的静态代理方式具有更好的性能，但是 AspectJ 需要特定的编译器进行处理，而 Spring AOP 则无需特定的编译器处理。
+
+_特别注意，Spring 使用的 CGLIB 是内置的库，位于`spring-core`的`org.springframework.cglib`包下。_
+
+### Spring AOP 分别在什么时候使用 JDK 动态代理和 CGLIB 动态代理？
+
+Spring 会根据被代理的类自动选择 JDK 动态代理还是 CGLIB 动态代理。
+如果类实现了接口，则默认使用 JDK 动态代理，如果类没有实现接口，且没有被`final`关键字修饰，则使用 CGLIB 动态代理。
+
+但是在 Spring Boot 2.x 之后的版本中，而是默认使用 CGLIB 动态代理。
+
+[Use @EnableTransactionManagement(proxyTargetClass = true) #5423](https://github.com/spring-projects/spring-boot/issues/5423)
+
+> We should use `@EnableTransactionManagement(proxyTargetClass = true)` to prevent nasty proxy issues when people aren't using interfaces.
+
+有开发者提出：在使用接口时，应该使用`@EnableTransactionManagement(proxyTargetClass = true)`防止出现讨厌的代理问题，即全部使用 CGLIB 动态代理而不是使用 JDK 动态代理。
+
+假设有一个`FooService`接口和`FooServiceImpl`实现类，我们通常会通过以下方式注入：
+
+```java
+@Autowired
+FooService fooService;
+```
+
+在这种情况下，无论是使用 JDK 动态代理，还是 CGLIB 都不会出现问题。
+
+但是如果使用 JDK 动态代理，选择直接注入`FooServiceImpl`实现类:
+
+```java
+@Autowired
+FooServiceImpl fooService;
+```
+
+启动 Spring Boot 时会报错：
+
+```
+***************************
+APPLICATION FAILED TO START
+***************************
+
+Description:
+
+The bean 'fooService' could not be injected because it is a JDK dynamic proxy
+
+The bean is of type 'jdk.proxy2.$Proxy169' and implements:
+	com.test.service.FooService
+	org.springframework.aop.SpringProxy
+	org.springframework.aop.framework.Advised
+	org.springframework.core.DecoratingProxy
+
+Expected a bean of type 'com.test.service.impl.FooServiceImpl' which implements:
+	com.test.service.FooService
+
+
+Action:
+
+Consider injecting the bean as one of its interfaces or forcing the use of CGLib-based proxies by setting proxyTargetClass=true on @EnableAsync and/or @EnableCaching.
+```
+
+因为 JDK 动态代理是基于接口的，代理对象只能赋值给接口变量。而 CGLIB 就不存在这个问题，因为 CGLIB 是通过继承生成子类来实现的，代理对象无论是赋值给接口还是实现类这两者都是代理对象的父类。
+
+Spring Boot 正是出于这种考虑，于是在 2.x 版本中，将 AOP 默认实现改为了 CGLIB 动态代理。
+
+总结：
+
+- Spring 5.x 中 AOP 默认依旧使用 JDK 动态代理。
+- Spring Boot 2.x 开始，为了解决使用 JDK 动态代理可能导致的类型转化异常而默认使用 CGLIB。
+
+如果需要默认使用 JDK 动态代理可以通过启动参数`spring.aop.proxy-target-class=false`来进行修改。
+
+关于 Spring Boot 2.x 开始，`@EnableTransactionManagement(proxyTargetClass = false)`注解不生效的问题，也有开发者表示无法理解，具体可以在 Github Issues 了解：
+
+[Default CGLib proxy setting default cannot be overridden by using core framework annotations (@EnableTransactionManagement, @EnableAspectJAutoProxy) #12194](https://github.com/spring-projects/spring-boot/issues/12194)
+
+> 据我所知，这是我第一次遇到 Spring Boot 不尊重标准用户配置的情况，这打破了“Spring Boot 填补了配置空白并尊重您明确配置的内容”的描述。
 
 ## Bean
 

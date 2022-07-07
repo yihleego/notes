@@ -1,5 +1,4 @@
 Netty 原理
-MyBatis 原理
 MongoDB 原理
 RocketMQ 扫盲
 Elasticsearch 扫盲

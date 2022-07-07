@@ -20,7 +20,7 @@
     - [Netty 🌧️](docs/netty.md)
     - [Vert.x 🌧️](docs/vertx.md)
     - [Dubbo 🌧️](docs/dubbo.md)
-    - [MyBatis 🌧️](docs/mybatis.md)
+    - [MyBatis ⛅](docs/mybatis.md)
 - Databases
     - [MySQL ☀️](docs/mysql.md)
         - [InnoDB](docs/mysql_innodb.md)

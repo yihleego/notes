@@ -176,23 +176,23 @@ public class DefaultSingletonBeanRegistry extends SimpleAliasRegistry implements
 
 ```java
 protected Object doCreateBean(String beanName, RootBeanDefinition mbd, @Nullable Object[] args)
-      throws BeanCreationException {
-  // ...
+        throws BeanCreationException {
+    // ...
 
-  boolean earlySingletonExposure = (mbd.isSingleton() && this.allowCircularReferences &&
-          isSingletonCurrentlyInCreation(beanName));
-  if (earlySingletonExposure) {
-      if (logger.isTraceEnabled()) {
-          logger.trace("Eagerly caching bean '" + beanName +
-                  "' to allow for resolving potential circular references");
-      }
-      addSingletonFactory(beanName, () -> getEarlyBeanReference(beanName, mbd, bean));
-      
-      // 新增一行代码，立即从三级缓存取出对象放入二级缓存（从三级缓存中取出的对象，可能是新创建的代理对象）
-      getSingleton(beanName, true);
-  }
+    boolean earlySingletonExposure = (mbd.isSingleton() && this.allowCircularReferences &&
+            isSingletonCurrentlyInCreation(beanName));
+    if (earlySingletonExposure) {
+        if (logger.isTraceEnabled()) {
+            logger.trace("Eagerly caching bean '" + beanName +
+                    "' to allow for resolving potential circular references");
+        }
+        addSingletonFactory(beanName, () -> getEarlyBeanReference(beanName, mbd, bean));
 
-  // ...
+        // 新增一行代码，立即从三级缓存取出对象放入二级缓存（从三级缓存中取出的对象，可能是新创建的代理对象）
+        getSingleton(beanName, true);
+    }
+
+    // ...
 }
 ```
 
@@ -228,3 +228,59 @@ Spring 将 AOP 和 Bean 的生命周期结合，是在 Bean 创建完全之后�
 | 12  | 完成`对象A`初始化                            |                                                                                            |
 | 13  | 将`对象A代理`从第二级缓存中移除，将`对象A代理`放入第一级缓存中    |                                                                                            |
 
+## Transactional
+
+在 Spring 中可以使用`@Transactional`注解启用事务。
+
+### 事务传播 Propagation
+
+1. REQUIRED（默认）：如果当前存在事务，则加入该事务，如果当前不存在事务，则创建一个新的事务。
+2. SUPPORTS：如果当前存在事务，则加入该事务；如果当前不存在事务，则以非事务的方式继续运行。
+3. MANDATORY：如果当前存在事务，则加入该事务；如果当前不存在事务，则抛出异常。
+4. REQUIRES_NEW：重新创建一个新的事务，如果当前存在事务，挂起当前的事务。
+5. NOT_SUPPORTED：以非事务的方式运行，如果当前存在事务，挂起当前的事务。
+6. NEVER：以非事务的方式运行，如果当前存在事务，则抛出异常。
+7. NESTED：如果没有，就新建一个事务；如果有，就在当前事务中嵌套其他事务。
+
+这里特别介绍一下 REQUIRED 和 NESTED 的区别。
+
+首先定义两个方法均为 REQUIRED 传播方式：`insert()`和`update()`
+
+```java
+@Transactional(propagation = Propagation.REQUIRED)
+public void insert() {
+    Foo foo = new Foo(1L, "foo");
+    dao.insert(foo);
+    try {
+        // 这里必须通过代理对象调用
+        proxy.update();
+    } catch (Exception e) {
+        logger.error("", e);
+    }
+}
+
+@Transactional(propagation = Propagation.REQUIRED)
+public void update(Foo foo) {
+    foo.setName("bar");
+    dao.update(foo);
+    throw new RuntimeException();
+}
+```
+
+运行结果：`update()`方法抛出异常事务回滚，由于`insert()`方法是同一个事务，因此两者都会回滚，所以数据库中无数据插入。
+
+然后将`update()`方法传播方式改为 NESTED，如下：
+
+```
+@Transactional(propagation = Propagation.NESTED)
+public void update(Foo foo) {
+    foo.setName("bar");
+    dao.update(foo);
+    throw new RuntimeException();
+}
+```
+
+运行结果：`update()`方法抛出异常事务回滚，`insert()`方法执行成功，所以数据库中有数据插入，且`name`值为`"foo"`。
+
+这就是 NESTED 传播方式的特性，能让事务部分回滚。NESTED 会创建一个嵌套事务，它是已经存在事务的一个真正的子事务。
+嵌套事务开始执行时，它将取得一个`savepoint`。嵌套事务失败时，将回滚到`savepoint`。嵌套事务是外部事务的一部分, 随着外部事务一起提交，如果外部事务回滚，嵌套事务也会跟着回滚。

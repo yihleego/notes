@@ -996,3 +996,56 @@ synchronized (new Object()) {
     run();
 }
 ```
+
+## 参数
+
+### 参数类型
+
+JVM 参数可以分为三类：标准参数（`-`）、非标准参数（`-X`）和非稳定参数（`-XX:`）。
+
+#### 标准参数
+
+所有 JVM 都必须实现这些参数的功能，而且向后兼容。
+
+例如：`-version`、`-classpath`、`-javaagent`等。
+
+#### 非标准参数
+
+默认 JVM 实现这些参数的功能，但是并不保证所有 JVM 实现都满足，且不保证向后兼容。
+
+例如：`-Xms1g`、`-Xmx2g`、`-Xss128k`等。
+
+#### 非稳定参数
+
+各个 JVM 实现均可能会有所不同，将来可能会随时取消，需要慎重使用。
+
+例如：`-XX:+UseSerialGC`、`-XX:+UseParallelGC`、`-XX:+UseParalledlOldGC`、`-XX:+UseConcMarkSweepGC`等。
+
+### 常用参数
+
+- `-Xms20m`：设置初始堆内存大小为`20m`（memory start）
+- `-Xmx20m`：设置最大内存大小为`20m`（memory max）
+- `-Xmn20m`：设置新生代内存大小为`20m`（memory new）
+- `-Xss64k`：设置每个线程的栈大小为`64k`（stack space）
+- `-XX:NewRatio=3`：设置新生代和老年代的比率为`1:3`
+- `-XX:SurvivorRatio=3`：新生代中Eden区与两个Survivor区的比率为`3:2`
+- `-XX:MaxTenuringThreshold=15`：设置转入老年代的存活次数为`15`
+- `-XX:PermSize=10m`：设置永久代内存大小为`10m`（Java 8 以前）
+- `-XX:MaxPermSize=20m`：设置永久代最大内存大小为`20m`（Java 8 以前）
+- `-XX:MetaspaceSize=10m`：设置元空间内存大小为`10m`（Java 8 以后）
+- `-XX:MaxMetaspaceSize=20m`：设置元空间最大内存大小为`20m`（Java 8 以后）
+- `-XX:+UseSerialGC`：使用 Serial 新生代收集器
+- `-XX:+UseParNewGC`：使用 ParNew 新生代收集器
+- `-XX:+UseParallelGC`：使用 Parallel Scavenge 新生代收集器
+- `-XX:+UseParalledlOldGC`：使用 Parallel Old 老年代收集器
+- `-XX:+UseConcMarkSweepGC`：设置 CMS 老年代收集器
+- `-XX:+UseG1GC`：设置 G1 收集器
+- `-XX:ParallelGCThreads=4`：设置并行收集器收集时使用的 CPU 数
+- `-XX:MaxGCPauseMillis=100`：设置收集器最大暂停时间
+- `-XX:GCTimeRatio=99`：设置收集器垃圾回收时间占程序运行时间的比率为`1%`，公式为：`1/(1+n)`
+- `-XX:G1HeapRegionSize=1m`：设置 G1 收集器每个 Region 内存大小为`1m`，取值范围为`1m`至`32m`，且应为2的N次幂
+- `-XX:+PrintGC`：打印 GC 基本信息
+- `-XX:+PrintGCDetails`：打印 GC 详细信息
+- `-XX:+PrintGCTimeStamps`：打印 GC 停顿时间
+- `-XX:+HeapDumpOnOutOfMemoryError`：设置 OOM 时生成堆的 Dump 文件
+- `-XX:HeapDumpPath`：设置 Dump 文件的路径

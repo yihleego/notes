@@ -137,7 +137,7 @@ Acceptor 线程池仅仅只用于客户端的认证、握手和安全认证，�
 
 ## Netty 工作流程
 
-### 第一步
+### 第一步：编写一个 Netty 应用
 
 从用户线程发起创建服务端操作，代码如下：
 
@@ -170,8 +170,365 @@ EventLoopGroup 管理的线程数可以通过构造函数设置，如果没有�
 - `bossGroup`：即 Acceptor 线程池，负责处理客户端的 TCP 连接请求。如果系统只有一个服务端端口需要监听，建议 bossGroup 线程组线程数设置为 1（即便设置成复数，也不会创建或使用多个线程）。
 - `workerGroup`：是真正负责 I/O 读写操作的线程组，通过 ServerBootstrap 的 group 方法进行设置，用于后续的 Channel 绑定。
 
-### 第二步
+### 第二步：启动服务端
 
-Acceptor 线程绑定监听端口，启动 NIO 服务端，相关代码如下：
+调用`bind()`方法，启动服务端，相关代码如下：
 
-TODO
+```java
+ChannelFuture future = bootstrap.bind(port).sync();
+```
+
+首先，创建了一个 Channel 对象，然后，从 bossGroup 中选择一个 EventLoop（即 Acceptor 线程），将 Channel 注册到 EventLoop 的多路复用器 Selector 上，用于接收客户端的 TCP 连接
+其中，`group()`方法返回的就是 bossGroup，它的`next()`方法用于从线程组中获取可用线程。
+
+[AbstractBootstrap#initAndRegister](https://github.com/netty/netty/blob/4.1/transport/src/main/java/io/netty/bootstrap/AbstractBootstrap.java#L307)
+
+```java
+final ChannelFuture initAndRegister() {
+    Channel channel = null;
+    try {
+        channel = channelFactory.newChannel();
+        init(channel);
+    } catch (Throwable t) {
+        if (channel != null) {
+            // channel can be null if newChannel crashed (eg SocketException("too many open files"))
+            channel.unsafe().closeForcibly();
+            // as the Channel is not registered yet we need to force the usage of the GlobalEventExecutor
+            return new DefaultChannelPromise(channel, GlobalEventExecutor.INSTANCE).setFailure(t);
+        }
+        // as the Channel is not registered yet we need to force the usage of the GlobalEventExecutor
+        return new DefaultChannelPromise(new FailedChannel(), GlobalEventExecutor.INSTANCE).setFailure(t);
+    }
+
+    ChannelFuture regFuture = config().group().register(channel);
+    if (regFuture.cause() != null) {
+        if (channel.isRegistered()) {
+            channel.close();
+        } else {
+            channel.unsafe().closeForcibly();
+        }
+    }
+    return regFuture;
+}
+```
+
+[MultithreadEventLoopGroup#register](https://github.com/netty/netty/blob/4.1/transport/src/main/java/io/netty/channel/MultithreadEventLoopGroup.java#L85)
+
+```java
+@Override
+public ChannelFuture register(Channel channel) {
+    return next().register(channel);
+}
+```
+
+[GenericEventExecutorChooser#next](https://github.com/netty/netty/blob/4.1/common/src/main/java/io/netty/util/concurrent/DefaultEventExecutorChooserFactory.java#L72)
+
+```java
+public EventExecutor next() {
+    return this.executors[(int)Math.abs(this.idx.getAndIncrement() % (long)this.executors.length)];
+}
+```
+
+### 第三步：监听客户端连接
+
+NioEventLoop 的`run()`方法无限循环调用`select()`方法监听客户端连接事件。
+
+```java
+protected void run() {
+    int selectCnt = 0;
+    for (;;) {
+        try {
+            int strategy;
+            try {
+                strategy = selectStrategy.calculateStrategy(selectNowSupplier, hasTasks());
+                switch (strategy) {
+                case SelectStrategy.CONTINUE:
+                    continue;
+
+                case SelectStrategy.BUSY_WAIT:
+                    // fall-through to SELECT since the busy-wait is not supported with NIO
+
+                case SelectStrategy.SELECT:
+                    long curDeadlineNanos = nextScheduledTaskDeadlineNanos();
+                    if (curDeadlineNanos == -1L) {
+                        curDeadlineNanos = NONE; // nothing on the calendar
+                    }
+                    nextWakeupNanos.set(curDeadlineNanos);
+                    try {
+                        if (!hasTasks()) {
+                            strategy = select(curDeadlineNanos);
+                        }
+                    } finally {
+                        // This update is just to help block unnecessary selector wakeups
+                        // so use of lazySet is ok (no race condition)
+                        nextWakeupNanos.lazySet(AWAKE);
+                    }
+                    // fall through
+                default:
+                }
+            } catch (IOException e) {
+                // If we receive an IOException here its because the Selector is messed up. Let's rebuild
+                // the selector and retry. https://github.com/netty/netty/issues/8566
+                rebuildSelector0();
+                selectCnt = 0;
+                handleLoopException(e);
+                continue;
+            }
+
+            selectCnt++;
+            cancelledKeys = 0;
+            needsToSelectAgain = false;
+            final int ioRatio = this.ioRatio;
+            boolean ranTasks;
+            if (ioRatio == 100) {
+                try {
+                    if (strategy > 0) {
+                        processSelectedKeys();
+                    }
+                } finally {
+                    // Ensure we always run tasks.
+                    ranTasks = runAllTasks();
+                }
+            } else if (strategy > 0) {
+                final long ioStartTime = System.nanoTime();
+                try {
+                    processSelectedKeys();
+                } finally {
+                    // Ensure we always run tasks.
+                    final long ioTime = System.nanoTime() - ioStartTime;
+                    ranTasks = runAllTasks(ioTime * (100 - ioRatio) / ioRatio);
+                }
+            } else {
+                ranTasks = runAllTasks(0); // This will run the minimum number of tasks
+            }
+
+            if (ranTasks || strategy > 0) {
+                if (selectCnt > MIN_PREMATURE_SELECTOR_RETURNS && logger.isDebugEnabled()) {
+                    logger.debug("Selector.select() returned prematurely {} times in a row for Selector {}.",
+                            selectCnt - 1, selector);
+                }
+                selectCnt = 0;
+            } else if (unexpectedSelectorWakeup(selectCnt)) { // Unexpected wakeup (unusual case)
+                selectCnt = 0;
+            }
+        } catch (CancelledKeyException e) {
+            // Harmless exception - log anyway
+            if (logger.isDebugEnabled()) {
+                logger.debug(CancelledKeyException.class.getSimpleName() + " raised by a Selector {} - JDK bug?",
+                        selector, e);
+            }
+        } catch (Error e) {
+            throw e;
+        } catch (Throwable t) {
+            handleLoopException(t);
+        } finally {
+            // Always handle shutdown even if the loop processing threw an exception.
+            try {
+                if (isShuttingDown()) {
+                    closeAll();
+                    if (confirmShutdown()) {
+                        return;
+                    }
+                }
+            } catch (Error e) {
+                throw e;
+            } catch (Throwable t) {
+                handleLoopException(t);
+            }
+        }
+    }
+}
+```
+
+调用 unsafe 的`read()`方法，对于 NioServerSocketChannel，它调用了 NioMessageUnsafe 的`read()`方法，代码如下：
+
+
+```java
+private void processSelectedKey(SelectionKey k, AbstractNioChannel ch) {
+    final AbstractNioChannel.NioUnsafe unsafe = ch.unsafe();
+    if (!k.isValid()) {
+        final EventLoop eventLoop;
+        try {
+            eventLoop = ch.eventLoop();
+        } catch (Throwable ignored) {
+            // If the channel implementation throws an exception because there is no event loop, we ignore this
+            // because we are only trying to determine if ch is registered to this event loop and thus has authority
+            // to close ch.
+            return;
+        }
+        // Only close ch if ch is still registered to this EventLoop. ch could have deregistered from the event loop
+        // and thus the SelectionKey could be cancelled as part of the deregistration process, but the channel is
+        // still healthy and should not be closed.
+        // See https://github.com/netty/netty/issues/5125
+        if (eventLoop == this) {
+            // close the channel if the key is not valid anymore
+            unsafe.close(unsafe.voidPromise());
+        }
+        return;
+    }
+
+    try {
+        int readyOps = k.readyOps();
+        // We first need to call finishConnect() before try to trigger a read(...) or write(...) as otherwise
+        // the NIO JDK channel implementation may throw a NotYetConnectedException.
+        if ((readyOps & SelectionKey.OP_CONNECT) != 0) {
+            // remove OP_CONNECT as otherwise Selector.select(..) will always return without blocking
+            // See https://github.com/netty/netty/issues/924
+            int ops = k.interestOps();
+            ops &= ~SelectionKey.OP_CONNECT;
+            k.interestOps(ops);
+
+            unsafe.finishConnect();
+        }
+
+        // Process OP_WRITE first as we may be able to write some queued buffers and so free memory.
+        if ((readyOps & SelectionKey.OP_WRITE) != 0) {
+            // Call forceFlush which will also take care of clear the OP_WRITE once there is nothing left to write
+            ch.unsafe().forceFlush();
+        }
+
+        // Also check for readOps of 0 to workaround possible JDK bug which may otherwise lead
+        // to a spin loop
+        if ((readyOps & (SelectionKey.OP_READ | SelectionKey.OP_ACCEPT)) != 0 || readyOps == 0) {
+            unsafe.read();
+        }
+    } catch (CancelledKeyException ignored) {
+        unsafe.close(unsafe.voidPromise());
+    }
+}
+```
+
+```java
+@Override
+public void read() {
+    assert eventLoop().inEventLoop();
+    final ChannelConfig config = config();
+    final ChannelPipeline pipeline = pipeline();
+    final RecvByteBufAllocator.Handle allocHandle = unsafe().recvBufAllocHandle();
+    allocHandle.reset(config);
+
+    boolean closed = false;
+    Throwable exception = null;
+    try {
+        try {
+            do {
+                int localRead = doReadMessages(readBuf);
+                if (localRead == 0) {
+                    break;
+                }
+                if (localRead < 0) {
+                    closed = true;
+                    break;
+                }
+
+                allocHandle.incMessagesRead(localRead);
+            } while (continueReading(allocHandle));
+        } catch (Throwable t) {
+            exception = t;
+        }
+
+        int size = readBuf.size();
+        for (int i = 0; i < size; i ++) {
+            readPending = false;
+            pipeline.fireChannelRead(readBuf.get(i));
+        }
+        readBuf.clear();
+        allocHandle.readComplete();
+        pipeline.fireChannelReadComplete();
+
+        if (exception != null) {
+            closed = closeOnReadError(exception);
+
+            pipeline.fireExceptionCaught(exception);
+        }
+
+        if (closed) {
+            inputShutdown = true;
+            if (isOpen()) {
+                close(voidPromise());
+            }
+        }
+    } finally {
+        // Check if there is a readPending which was not processed yet.
+        // This could be for two reasons:
+        // * The user called Channel.read() or ChannelHandlerContext.read() in channelRead(...) method
+        // * The user called Channel.read() or ChannelHandlerContext.read() in channelReadComplete(...) method
+        //
+        // See https://github.com/netty/netty/issues/2254
+        if (!readPending && !config.isAutoRead()) {
+            removeReadOp();
+        }
+    }
+}
+```
+最终它会调用 NioServerSocketChannel 的 doReadMessages 方法创建一个 NioSocketChannel 对象，代码如下：
+
+```java
+@Override
+protected int doReadMessages(List<Object> buf) throws Exception {
+    SocketChannel ch = SocketUtils.accept(javaChannel());
+
+    try {
+        if (ch != null) {
+            buf.add(new NioSocketChannel(this, ch));
+            return 1;
+        }
+    } catch (Throwable t) {
+        logger.warn("Failed to create a new channel from an accepted socket.", t);
+
+        try {
+            ch.close();
+        } catch (Throwable t2) {
+            logger.warn("Failed to close a socket.", t2);
+        }
+    }
+
+    return 0;
+}
+```
+
+从 workerGroup 中选择一个 I/O 线程负责网络消息的读写，并将它注册到多路复用器上，监听 READ 操作，代码中 childGroup 即为 workerGroup。
+
+```java
+@Override
+public void channelRead(ChannelHandlerContext ctx, Object msg) {
+    final Channel child = (Channel) msg;
+
+    child.pipeline().addLast(childHandler);
+
+    setChannelOptions(child, childOptions, logger);
+    setAttributes(child, childAttrs);
+
+    try {
+        childGroup.register(child).addListener(new ChannelFutureListener() {
+            @Override
+            public void operationComplete(ChannelFuture future) throws Exception {
+                if (!future.isSuccess()) {
+                    forceClose(child, future.cause());
+                }
+            }
+        });
+    } catch (Throwable t) {
+        forceClose(child, t);
+    }
+}
+```
+
+
+
+
+## NioEventLoop 
+
+### NioEventLoop 介绍
+
+NioEventLoop 是 Netty 的 Reactor 线程，它的职责如下：
+
+- 作为服务端 Acceptor 线程，负责处理客户端的请求接入。
+- 作为客户端 Connector 线程，负责注册监听连接操作位，用于判断异步连接结果。
+- 作为 IO 线程，监听网络读操作位，负责从 SocketChannel 中读取报文。
+- 作为 IO 线程，负责向 SocketChannel 写入报文发送给对方，如果发生写半包，会自动注册监听写事件，用于后续继续发送半包数据，直到数据全部发送完成。
+- 作为定时任务线程，可以执行定时任务，例如：链路空闲检测和发送心跳消息等。
+- 作为线程执行器可以执行普通的任务线程（Runnable）。
+
+- NioEventLoop 继承 SingleThreadEventExecutor 类，这就意味着它实际上是一个线程个数为 1 的线程池，继承关系如下所示：
+

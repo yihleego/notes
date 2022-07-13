@@ -547,7 +547,7 @@ Netty 通过串行化设计理念降低了用户的开发难度，提升了处�
 
 #### 定时任务与时间轮算法
 
-在 Netty 中，有很多功能依赖定时任务，比较典型的有：客户端连接超时控制、路空闲检测。
+在 Netty 中，有很多功能依赖定时任务，比较典型的有：客户端连接超时控制、链路空闲检测。
 
 一种比较常用的设计理念是在 NioEventLoop 中聚合 JDK 的定时任务线程池 ScheduledExecutorService，通过它来执行定时任务。这样做单纯从性能角度看不是最优，原因有如下三点：
 
@@ -578,19 +578,19 @@ ExecutionHandler 是为了解决部分用户 Handler 可能存在执行时间不
 
 鉴于上述原因，Netty 的后续版本彻底删除了 ExecutionHandler，而且也没有提供类似的相关功能类，把精力聚焦在 Netty 的 IO 线程 NioEventLoop 上，这无疑是一种巨大的进步，Netty 重新开始聚焦在 IO 线程本身，而不是提供用户相关的业务线程模型。
 
-### Netty 线程开发最佳实践
+## Netty 线程开发最佳实践
 
-#### 时间可控的简单业务直接在 IO 线程上处理
+### 时间可控的简单业务直接在 IO 线程上处理
 
 如果业务非常简单，执行时间非常短，不需要与外部网元交互、访问数据库和磁盘，不需要等待其它资源，则建议直接在业务 ChannelHandler 中执行，不需要再启业务的线程或者线程池。避免线程上下文切换，也不存在线程并发问题。
 
-#### 复杂和时间不可控业务建议投递到后端业务线程池统一处理
+### 复杂和时间不可控业务建议投递到业务线程池统一处理
 
-对于此类业务，不建议直接在业务 ChannelHandler 中启动线程或者线程池处理，建议将不同的业务统一封装成 Task，统一投递到后端的业务线程池中进行处理。
+对于此类业务，不建议直接在业务 ChannelHandler 中启动线程或者线程池处理，建议将不同的业务统一封装成 Task，统一投递到业务线程池中进行处理。
 
 过多的业务 ChannelHandler 会带来开发效率和可维护性问题，不要把 Netty 当作业务容器，对于大多数复杂的业务产品，仍然需要集成或者开发自己的业务容器，做好和 Netty 的架构分层。
 
-#### 业务线程避免直接操作 ChannelHandler
+### 业务线程避免直接操作 ChannelHandler
 
 对于 ChannelHandler，IO 线程和业务线程都可能会操作，因为业务通常是多线程模型，这样就会存在多线程操作 ChannelHandler。
 为了尽量避免多线程并发问题，建议按照 Netty 自身的做法，通过将操作封装成独立的 Task 由 NioEventLoop 统一执行，而不是业务线程直接操作，相关代码如下所示：
@@ -605,3 +605,40 @@ if (ctx.executor().inEventLoop()) {
 
 如果确认并发访问的数据或者并发操作是安全的，则无需多此一举，这个需要根据具体的业务场景进行判断，灵活处理。
 
+## JDK NIO Bug
+
+### 发生原因
+
+Linux 系统默认使用 epoll 作为 IO 多路复用器，JDK NIO 在 Linux 下默认也是 epoll，但其实现却存在漏洞。
+
+例如：即使是关注的 select 轮询事件返回的数量为 0，也可能使本应该阻塞的 select 方法被唤醒，导致空轮询，最终导致 CPU 满载，复现该 Bug 的场景如下：
+
+```
+0. 服务端等待连接
+1. 客户端发起连接，并发送消息
+2. 服务端接受连接，并注册 OP_READ
+3. 服务端读取消息，并从 interest op set 中移除 OP_READ 
+4. 客户端关闭连接
+5. 服务端发送消息（此时没有读取操作也就没有设置 OP_READ）
+6. 服务端 select 方法被无限唤醒，且回事件数量为 0
+```
+
+因为 epoll 对于突然中断的连接 socket 会对返回的 eventSet 事件集合置为 POLLHUP 或者 POLLERR，eventSet 事件集合发生了变化时，会唤醒 select 方法，进而导致空轮询。
+根本原因在于 JDK 没有处理这种情况，从 java.nio.channels.SelectionKey 中可以发现没定义有异常事件的类型。
+
+```java
+public abstract class SelectionKey {
+    public static final int OP_READ = 1 << 0;
+    public static final int OP_WRITE = 1 << 2;
+    public static final int OP_CONNECT = 1 << 3;
+    public static final int OP_ACCEPT = 1 << 4;
+}
+```
+
+### Netty 如何解决/规避
+
+1. 调用 select 方法，并设置超时时间，同时记录轮询次数（selectCnt++）
+2. 计算 select 方法的操作时间，如果阻塞时间大于等于超时时间，则说明 select 方法正常执行，重置轮询次数；如果阻塞时间小于超时时间，则需要进一步判断轮询次数是否超过了设定的阈值（默认为512），如果超过了说明可能出现了 Bug，需要重建 Selector。
+3. 调用 rebuildSelector() 方法重新打开一个 newSelector，然后将 oldSelector 的所有 key 注册到 newSelector，最后替换 oldSelector 即可。
+
+_在新版本的 Netty 中，则是通过判断是否执行了任务，或 select 方法返回的值是否大于 0，取代了旧版本中通过阻塞时间判断，本质上原理是一样的。_

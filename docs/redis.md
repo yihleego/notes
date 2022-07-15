@@ -1198,3 +1198,7 @@ RedisRaft 复制数据特点：
 
 当然，RedisRaft 遵循 CAP 定理，RedisRaft 这种通过模块管理的 Redis 集群还有一个假设前提，或者说它首先必须取决于：大多数 Redis 服务器节点是否可运行并已连接。（banq注：CAP中可用性）
 RedisRaft 应该在明年的 Redis 7.0 版本中达到一般可用性阶段。
+
+## Lettuce 连接池
+
+TODO

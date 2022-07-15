@@ -35,6 +35,7 @@
     - [Kafka 🌧️](docs/kafka.md)
     - [Elasticsearch 🌧️](docs/elasticsearch.md)
     - [RocketMQ 🌧️](docs/rocketmq.md)
+    - [RabbitMQ 🌧️](docs/rabbitmq.md)
 - Solutions
     - [Seata ☀️](docs/seata.md)
     - [ShardingSphere 🌧️](docs/shardingsphere.md)

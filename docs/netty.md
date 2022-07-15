@@ -43,7 +43,7 @@ Bootstrap 意思是引导，一个 Netty 应用通常由一个 Bootstrap 开始�
 
 EventLoopGroup 是一组 EventLoop 的抽象，Netty 为了更好的利用多核 CPU 资源，一般会有多个 EventLoop 同时工作，每个 EventLoop 维护着一个 Selector 实例。
 
-EventLoopGroup 提供`next()`方法，可以从组里面按照一定规则获取其中一个 EventLoop 来处理任务。在 Netty 服务器端编程中，我们一般都需要提供两个 EventLoopGroup，例如：BossEventLoopGroup 和 WorkerEventLoopGroup。
+EventLoopGroup 提供 next() 方法，可以从组里面按照一定规则获取其中一个 EventLoop 来处理任务。在 Netty 服务器端编程中，我们一般都需要提供两个 EventLoopGroup，例如：BossEventLoopGroup 和 WorkerEventLoopGroup。
 
 ### Selector
 
@@ -172,14 +172,14 @@ EventLoopGroup 管理的线程数可以通过构造函数设置，如果没有�
 
 ### 第二步：启动服务端
 
-调用`bind()`方法，启动服务端，相关代码如下：
+绑定端口，启动服务端，相关代码如下：
 
 ```java
 ChannelFuture future = bootstrap.bind(port).sync();
 ```
 
 首先，创建了一个 Channel 对象，然后，从 bossGroup 中选择一个 EventLoop（即 Acceptor 线程），将 Channel 注册到 EventLoop 的多路复用器 Selector 上，用于接收客户端的 TCP 连接
-其中，`group()`方法返回的就是 bossGroup，它的`next()`方法用于从线程组中获取可用线程。
+其中， group() 方法返回的就是 bossGroup，它的 next() 方法用于从线程组中获取可用线程。
 
 [AbstractBootstrap#initAndRegister](https://github.com/netty/netty/blob/4.1/transport/src/main/java/io/netty/bootstrap/AbstractBootstrap.java#L307)
 
@@ -231,7 +231,7 @@ public EventExecutor next() {
 
 ### 第三步：监听客户端连接
 
-NioEventLoop 的`run()`方法无限循环调用`select()`方法监听客户端连接事件。
+NioEventLoop 的 run() 方法无限循环调用 select() 方法监听客户端连接事件。
 
 ```java
 protected void run() {
@@ -340,7 +340,7 @@ protected void run() {
 }
 ```
 
-调用 unsafe 的`read()`方法，对于 NioServerSocketChannel，它调用了 NioMessageUnsafe 的`read()`方法，代码如下：
+调用 unsafe 的 read() 方法，对于 NioServerSocketChannel，它调用了 NioMessageUnsafe 的 read() 方法，代码如下：
 
 ```java
 private void processSelectedKey(SelectionKey k, AbstractNioChannel ch) {

@@ -176,21 +176,33 @@ _TODO_
 
 ## ConcurrentHashMap
 
-`Java 7`及之前的版本`ConcurrentHashMap`是基于`Segment`数组加`HashEntry`链表实现的，所以操作元素还是需要遍历链表，导致效率不是很高。。
-
-`Java 8`版本弃用了`Segment`分段锁，而是采用了`CAS`和`synchronized`结合的方式保证并发安全性。
+`Java 7`及之前的版本`ConcurrentHashMap`是基于`Segment`数组加`HashEntry`链表实现的，
+而`Java 8`版本弃用了`Segment`分段锁，是采用了`CAS`和`synchronized`结合的方式保证并发安全性。
 跟`HashMap`相似，把`HashEntry`改为了`Node`但作用不变，并且也引入了红黑树。
 
 ### ConcurrentHashMap in Java 7
 
-在`Java 7`及之前的版本中，采用了分段锁方案，`Segment`继承于`ReentrantLock`，当一个线程访问一个`Segment`时，不会影响到其他的`Segment`，
+在`Java 7`及之前的版本中，采用了分段锁方案，其内部维护了一个`Segment`数组，`Segment`类继承于`ReentrantLock`类，当一个线程访问一个`Segment`对象时，不会影响到其他的`Segment`，
 换而言之，如果有一个`ConcurrentHashMap`的`segments`大小为`16`时，可以允许`16`个线程同时操作`16`个`Segment`，既线程安全，又不会发生竞争。
 
-![java_concurrenthashmap_segments.png](images/java_concurrenthashmap_segments.png)
+```java
+final Segment<K,V>[] segments;
+
+static final class Segment<K,V> extends ReentrantLock implements Serializable {
+    transient volatile HashEntry<K,V>[] table;
+}
+
+static final class HashEntry<K,V> {
+    final int hash;
+    final K key;
+    volatile V value;
+    volatile HashEntry<K,V> next;
+}
+```
 
 #### `put(K key, V value)`方法
 
-计算`key`的`hashCode`在`segments`中定位`key`所在的`Segment`。
+计算`key`的`hashCode`在`segments`中定位`key`所对应的`Segment`对象，具体的`put()`方法在`Segment`类中实现。
 
 ```java
 public V put(K key, V value) {
@@ -206,7 +218,7 @@ public V put(K key, V value) {
 }
 ```
 
-调用`tryLock()`尝试获取锁，如果获取失败说明有其他线程存在竞争，随后调用`scanAndLockForPut(K key, int hash, V value)`自旋获取锁，
+首先，调用`tryLock()`尝试获取锁，如果获取失败说明有其他线程存在竞争，随后调用`scanAndLockForPut(K key, int hash, V value)`自旋获取锁，
 如果重试的次数达到了`MAX_SCAN_RETRIES`则调用`lock()`用阻塞方式获取锁，防止`CPU`空转。
 获取到锁之后，通过`key`的`hashCode`在`table`中定位到`HashEntry`，
 若`value`不存在就新增`HashEntry`；若存在替换原`HashEntry`的`value`。

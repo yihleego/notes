@@ -164,22 +164,64 @@ public void run(int port) throws InterruptedException {
 }
 ```
 
-在创建服务端的时候实例化了 2 个 EventLoopGroup，它实际就是一个 EventLoop 线程组，负责管理 EventLoop 的申请和释放。
-EventLoopGroup 管理的线程数可以通过构造函数设置，如果没有设置，默认取`-Dio.netty.eventLoopThreads`，如果该系统参数也没有指定，则为可用的 CPU 内核数 × 2。
+在创建服务端的时候实例化了 2 个`EventLoopGroup`，实际为一个`EventLoop`线程组，负责管理`EventLoop`的申请和释放。
+`EventLoopGroup`管理的线程数可以通过构造函数设置，如果没有设置，默认取`-Dio.netty.eventLoopThreads`，如果该系统参数也没有指定，则为可用的 CPU 内核数 × 2。
 
-- `bossGroup`：即 Acceptor 线程池，负责处理客户端的 TCP 连接请求。如果系统只有一个服务端端口需要监听，建议 bossGroup 线程组线程数设置为 1（即便设置成复数，也不会创建或使用多个线程）。
-- `workerGroup`：是真正负责 I/O 读写操作的线程组，通过 ServerBootstrap 的 group 方法进行设置，用于后续的 Channel 绑定。
+- `bossGroup`：即 Acceptor 线程池，负责处理客户端的 TCP 连接请求。如果系统只有一个服务端端口需要监听，建议`bossGroup`线程组线程数设置为 1（即便设置成复数，也不会创建或使用多个线程）。
+- `workerGroup`：是真正负责 I/O 读写操作的线程组，通过`ServerBootstrap`的`group()`方法进行设置，用于后续的`Channel`绑定。
 
 ### 第二步：启动服务端
 
-绑定端口，启动服务端，相关代码如下：
+调用`ServerBootstrap`的`bind()`方法绑定端口，启动服务端，相关代码如下：
 
 ```java
 ChannelFuture future = bootstrap.bind(port).sync();
 ```
 
-首先，创建了一个 Channel 对象，然后，从 bossGroup 中选择一个 EventLoop（即 Acceptor 线程），将 Channel 注册到 EventLoop 的多路复用器 Selector 上，用于接收客户端的 TCP 连接
-其中， group() 方法返回的就是 bossGroup，它的 next() 方法用于从线程组中获取可用线程。
+进入`bind()`方法，首先会调用`initAndRegister()`方法，初始化`Channel`对象，并将其注册到`bossGroup`的其中一个`EventLoop`。
+
+[AbstractBootstrap#doBind](https://github.com/netty/netty/blob/4.1/transport/src/main/java/io/netty/bootstrap/AbstractBootstrap.java#L271)
+
+```java
+private ChannelFuture doBind(final SocketAddress localAddress) {
+    final ChannelFuture regFuture = initAndRegister();
+    final Channel channel = regFuture.channel();
+    if (regFuture.cause() != null) {
+        return regFuture;
+    }
+
+    if (regFuture.isDone()) {
+        // At this point we know that the registration was complete and successful.
+        ChannelPromise promise = channel.newPromise();
+        doBind0(regFuture, channel, localAddress, promise);
+        return promise;
+    } else {
+        // Registration future is almost always fulfilled already, but just in case it's not.
+        final PendingRegistrationPromise promise = new PendingRegistrationPromise(channel);
+        regFuture.addListener(new ChannelFutureListener() {
+            @Override
+            public void operationComplete(ChannelFuture future) throws Exception {
+                Throwable cause = future.cause();
+                if (cause != null) {
+                    // Registration on the EventLoop failed so fail the ChannelPromise directly to not cause an
+                    // IllegalStateException once we try to access the EventLoop of the Channel.
+                    promise.setFailure(cause);
+                } else {
+                    // Registration was successful, so set the correct executor to use.
+                    // See https://github.com/netty/netty/issues/2586
+                    promise.registered();
+
+                    doBind0(regFuture, channel, localAddress, promise);
+                }
+            }
+        });
+        return promise;
+    }
+}
+```
+
+首先，创建了一个`Channel`对象，然后，从`bossGroup`中选择一个`EventLoop`（即 Acceptor 线程），将`Channel`注册到`EventLoop`的多路复用器`Selector`上，用于接收客户端的 TCP 连接。
+其中，`group()`方法返回的就是`bossGroup`，它的`next()`方法用于从线程组中获取可用线程。
 
 [AbstractBootstrap#initAndRegister](https://github.com/netty/netty/blob/4.1/transport/src/main/java/io/netty/bootstrap/AbstractBootstrap.java#L307)
 
@@ -231,7 +273,7 @@ public EventExecutor next() {
 
 ### 第三步：监听客户端连接
 
-NioEventLoop 的 run() 方法无限循环调用 select() 方法监听客户端连接事件。
+`NioEventLoop`的`run()`方法无限循环调用`select()`方法监听客户端连接事件：
 
 ```java
 protected void run() {
@@ -340,7 +382,7 @@ protected void run() {
 }
 ```
 
-调用 unsafe 的 read() 方法，对于 NioServerSocketChannel，它调用了 NioMessageUnsafe 的 read() 方法，代码如下：
+调用`unsafe`的`read()`方法，对于`NioServerSocketChannel`，它调用了`NioMessageUnsafe`的`read()`方法，代码如下：
 
 ```java
 private void processSelectedKey(SelectionKey k, AbstractNioChannel ch) {
@@ -461,7 +503,7 @@ public void read() {
 }
 ```
 
-最终它会调用 NioServerSocketChannel 的 doReadMessages 方法创建一个 NioSocketChannel 对象，代码如下：
+最终它会调用`NioServerSocketChannel`的`doReadMessages`方法创建一个`NioSocketChannel`对象，代码如下：
 
 ```java
 @Override
@@ -487,7 +529,7 @@ protected int doReadMessages(List<Object> buf) throws Exception {
 }
 ```
 
-从 workerGroup 中选择一个 I/O 线程负责网络消息的读写，并将它注册到多路复用器上，监听 READ 操作，代码中 childGroup 即为 workerGroup。
+从`workerGroup`中选择一个 I/O 线程负责网络消息的读写，并将它注册到多路复用器上，监听 READ 操作，代码中`childGroup`即为`workerGroup`。
 
 ```java
 @Override

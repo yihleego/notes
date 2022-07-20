@@ -1,4 +1,3 @@
-Elasticsearch 基础
 RocketMQ 基础
 RabbitMQ 基础
 Docker 基础

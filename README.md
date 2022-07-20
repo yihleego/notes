@@ -32,7 +32,7 @@
     - [MongoDB 🌧️](docs/mongodb.md)
     - [TiDB 🌧️](docs/tidb.md)
 - Middleware
-    - [Elasticsearch 🌧️](docs/elasticsearch.md)
+    - [Elasticsearch ☀️](docs/elasticsearch.md)
     - [Kafka 🌧️](docs/kafka.md)
     - [RocketMQ 🌧️](docs/rocketmq.md)
     - [RabbitMQ 🌧️](docs/rabbitmq.md)

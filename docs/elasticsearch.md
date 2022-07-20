@@ -262,4 +262,97 @@ Elasticsearch 擅长搜索，而不擅长计算，所以应该保证在 Elastics
 
 #### 使用滚动搜索
 
-TODO
+通过观察热门的社交、购物、即时聊天等软件，我们可以发现，滚动搜索是普遍被采用的方案，用户只能通过上划屏幕或者点击下一页进行加载更多数据，而不允许通过指定某一页来搜索。
+
+##### scroll
+
+Elasticsearch 提供了 scroll 接口可以实现滚动搜索的功能。其原理是，首次搜索时，会生成一个带存活时间的数据快照，因为是快照，所以期间数据发生变化，不会对搜索结果造成影响。
+
+假设存在一个名为`data`的索引，搜索时指定快照存活时间为`5m`，请求示例如下:
+
+```cURL
+curl -X GET "http://localhost:9200/data/_search?scroll=5m" \
+    -H "Content-Type: application/json" \
+    -d "{
+          \"size\": 10,
+          \"query\": {
+            \"match_all\": {}
+          }
+        }"
+```
+
+如果请求成功，返回的格式如下所示：
+
+```json
+{
+    "_scroll_id":"FGluY2x1ZGVfY29udGV4dF91dWlkDXF1ZXJ5QW5kRmV0Y2gBFnJKSDR2SjN3Um5LdjMtSmQyWUNnVHcAAAAAAAAAOxZqNnlHRVJld1FJU2d5eDdRRE9EZURR",
+    "took":10,
+    "timed_out":false,
+    "_shards":{
+        "total":1,
+        "successful":1,
+        "skipped":0,
+        "failed":0
+    },
+    "hits":{
+        "total":{
+            "value":100,
+            "relation":"eq"
+        },
+        "max_score":1,
+        "hits":[ /*忽略*/ ]
+    }
+}
+```
+
+接下来的每一次搜索请求，不需要再指定`index`和`type`，只需要传`scroll_id`参数即可。同时也可以指定`scroll`参数，保证用户持续不断翻页时，不会因为快照过期而失败，请求示例如下:
+
+```cURL
+curl -X GET "http://localhost:9200/_search/scroll?scroll=5m&scroll_id=FGluY2x1ZGVfY29udGV4dF91dWlkDXF1ZXJ5QW5kRmV0Y2gBFnJKSDR2SjN3Um5LdjMtSmQyWUNnVHcAAAAAAAAAOxZqNnlHRVJld1FJU2d5eDdRRE9EZURR" \
+    -H "Content-Type: application/json" \
+```
+
+显然，使用 scroll 并不是完美解决了所有问题，它不仅需要占用服务器资源保存数据快照，而且只支持搜索下一页，不支持搜索上一页。
+
+##### search_after
+
+除了 scroll 接口，我们还可以使用 Elasticsearch 提供 search_after 功能实现翻页，其思想是使用前一页的结果来帮助检索下一页的数据，显然，这种方式也不允许用户随意翻页。
+
+假设存在一个名为`data`的索引，搜索时指定`sort`排序字段为`code`升序排序，请求示例如下:
+
+```cURL
+curl -X GET "http://localhost:9200/data/_search" \
+    -H "Content-Type: application/json" \
+    -d "{
+          \"size\": 10,
+          \"from\": 0,
+          \"sort\": [
+            {
+              \"code\": {
+                \"order\": \"asc\"
+              }
+            }
+          ]
+        }"
+```
+
+如果请求成功，保留请求中返回的最后一条数据排序字段的值，假设最后一条数据的`code`值为`100`，则第二次请求示例如下:
+
+```cURL
+curl -X GET "http://localhost:9200/data/_search" \
+    -H "Content-Type: application/json" \
+    -d "{
+          \"size\": 10,
+          \"from\": 0,
+          \"sort\": [
+            {
+              \"code\": {
+                \"order\": \"asc\"
+              }
+            }
+          ],
+          \"search_after\": [
+            \"100\"
+          ]
+        }"
+```

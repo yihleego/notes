@@ -33,9 +33,9 @@
     - [TiDB 🌧️](docs/tidb.md)
 - Middleware
     - [Elasticsearch ☀️](docs/elasticsearch.md)
-    - [Kafka 🌧️](docs/kafka.md)
-    - [RocketMQ 🌧️](docs/rocketmq.md)
+    - [RocketMQ ☀️](docs/rocketmq.md)
     - [RabbitMQ 🌧️](docs/rabbitmq.md)
+    - [Kafka 🌧️](docs/kafka.md)
 - Solutions
     - [Seata ☀️](docs/seata.md)
     - [ShardingSphere 🌧️](docs/shardingsphere.md)

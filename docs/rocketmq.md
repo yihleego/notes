@@ -1,6 +1,6 @@
 # RocketMQ
 
-RocketMQ 是一个基于 Java 实现的，分布式队列模型的消息中间件，具有高可用、高可靠、高实时、低延迟的特点。
+RocketMQ 是一个基于 Java 开发的，分布式队列模型的，开源的消息中间件，具有高可用、高可靠、高实时、低延迟的特点。
 
 ## 主要角色
 
@@ -30,7 +30,7 @@ Broker 主要负责消息存储、消息分发和消息投递，其内部维护�
 
 ### Producer
 
-Producer 会选择一个 NameServer 节点保持长连接（无心跳），定时获取 Topic 路由信息。如果当前 NameServer 不可用时，Producer 会自动尝试连接下一个 NameServer，直到有可用连接为止。
+Producer 是消息生产者，启动服务时，会选择一个 NameServer 节点保持长连接（无心跳），定时获取 Topic 路由信息。如果当前 NameServer 不可用时，Producer 会自动尝试连接下一个 NameServer，直到有可用连接为止。
 默认情况下，Producer 每隔 30 秒从 NameServer 获取所有 Topic 路由信息，这意味着，如果某个 Broker 如果崩溃故障，Producer 最多要 30 秒才能感知。
 在此期间，发往该 Broker 的消息发送失败。该时间由`DefaultMQProducer`的`pollNameServerInterval`参数决定，可通过配置修改。
 
@@ -53,7 +53,7 @@ Producer 发送消息有三种策略：
 
 ### Consumer
 
-Consumer 会选择一个 NameServer 节点保持长连接（无心跳），定时获取 Topic 路由信息。如果当前 NameServer 不可用时，Consumer 会自动尝试连接下一个 NameServer，直到有可用连接为止。
+Consumer 是消息消费者，启动服务时，会选择一个 NameServer 节点保持长连接（无心跳），定时获取 Topic 路由信息。如果当前 NameServer 不可用时，Consumer 会自动尝试连接下一个 NameServer，直到有可用连接为止。
 默认情况下，Consumer 每隔 30 秒从 NameServer 获取所有 Topic 路由信息，这意味着，如果某个 Broker 如果崩溃故障，Consumer 最多要 30 秒才能感知。
 在此期间，发往该 Broker 的消息发送失败。该时间由`DefaultMQPushConsumer`的`pollNameServerInterval`参数决定，可通过配置修改。
 
@@ -110,7 +110,7 @@ Topic 是消息的标签，用于同一主题下区分不同类型的消息。�
 一个 Topic 可以划分成多个消息队列。Topic 只是个逻辑上的概念，消息队列是消息的物理管理单位，当发送消息的时候，Broker 会轮询包含该 Topic 的所有消息队列，然后将消息发出去。
 通过消息队列，可以使得消息的存储可以分布式集群化，具有了水平的扩展能力。
 
-## 消息队列高可用
+## 高可用
 
 ### 多主模式
 
@@ -184,7 +184,7 @@ RocketMQ 4.3 版支持事务消息（Transactional Message），采用了两阶�
 
 1. 消息只要持久化到 CommitLog 日志文件中，即使 Broker 宕机，未消费的消息也能重新恢复再消费。
 2. 采用同步刷盘策略，可以保证消息持久化到磁盘之后，再返回响应给生产者。
-3. 采用多主多从同步复制或 DLedger 部署方案
+3. 采用多主多从同步复制或 DLedger 部署方案。
 
 ### 从 Producer 端考虑
 

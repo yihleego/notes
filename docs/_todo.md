@@ -1,4 +1,3 @@
-RabbitMQ 基础
 Docker 基础
 Kubernetes 基础
 Business 方案

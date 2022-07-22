@@ -32,7 +32,7 @@
 - Middleware
     - [Elasticsearch ☀️](docs/elasticsearch.md)
     - [RocketMQ ☀️](docs/rocketmq.md)
-    - [RabbitMQ 🌧️](docs/rabbitmq.md)
+    - [RabbitMQ ⛅](docs/rabbitmq.md)
     - [Kafka 🌧️](docs/kafka.md)
 - Solutions
     - [Seata ☀️](docs/seata.md)

@@ -253,6 +253,6 @@ public class MessageStoreConfig {
 这样做的原因：RocketMQ 会把消息按照延迟时间段发送到指定的队列中，然后定时对这些队列进行轮询。如果发现消息到期，就把该消息发送到指定 Topic 的队列中。
 因为同一延迟队列中消息的延迟时间是一致的，且消息是按照消息到期时间升序排序的，所以可以保证消息消费的有序性。
 
-在 Broker 启动的时候，默认情况下，会根据 18 个延迟级别分别创建 18 个 DeliverDelayedMessageTimerTask 定时任务，在一次任务执行的时候，调度任务会计算距离下一次的延迟时间，然后创建一个新的定时任务。
+在 Broker 启动的时候，默认情况下，会根据 18 个延迟级别分别创建 18 个 DeliverDelayedMessageTimerTask 定时任务，在任务执行的时候，调度任务会计算距离下一次的延迟时间，然后创建一个新的定时任务。
 
-在 RocketMQ 4.9.2 之后的版本，优化了 ScheduleMessageService 中定时处理延迟队列的部分逻辑，使用了 ScheduledExecutorService 代替 Timer 执行定时任务，通过 scheduleWithFixedDelay 方法代替创建创建大量非必要对象，降低 GC 压力。
+由于 Timer 是单线程的，在延迟级别数量多的情况下可能会出现一系列问题，所以在 RocketMQ 4.9.2 之后的版本，使用了 ScheduledExecutorService 代替 Timer 执行定时任务，~~通过 scheduleWithFixedDelay 方法代替创建创建大量非必要对象，降低 GC 压力~~。

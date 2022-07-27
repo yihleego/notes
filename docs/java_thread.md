@@ -90,7 +90,7 @@ public ThreadPoolExecutor(int corePoolSize,
 
 ### ForkJoinPool
 
-`ForkJoinPool`是 Java 7 新加入的线程池，其基本原理是将一个大任务拆分成多个小任务，并行执行，再结合工作窃取模式提高整体的执行效率，充分利用CPU资源。
+`ForkJoinPool`是 Java 7 新加入的线程池，其基本原理是将一个大任务拆分成多个小任务，并行执行，再结合工作窃取模式提高整体的执行效率，充分利用 CPU 资源。
 
 #### Fork/Join
 

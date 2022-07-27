@@ -18,7 +18,7 @@
 
 - `int getState()`返回同步状态
 - `void setState(int newState)`设置同步状态
-- `boolean compareAndSetState(int expect, int update)`通过`CAS`设置同步状态
+- `boolean compareAndSetState(int expect, int update)`通过`CAS`操作设置同步状态
 - `boolean isHeldExclusively()`当前线程是否持有资源（需要子类实现）
 - `void acquire(int arg)`独占式获取资源模板
 - `boolean release(int arg)`独占式释放资源模板
@@ -176,13 +176,13 @@ _TODO_
 
 ## ConcurrentHashMap
 
-`Java 7`及之前的版本`ConcurrentHashMap`是基于`Segment`数组加`HashEntry`链表实现的，
-而`Java 8`版本弃用了`Segment`分段锁，是采用了`CAS`和`synchronized`结合的方式保证并发安全性。
+Java 7 及之前的版本`ConcurrentHashMap`是基于`Segment`数组加`HashEntry`链表实现的，
+而 Java 8 版本弃用了`Segment`分段锁，是采用了`CAS`和`synchronized`结合的方式保证并发安全性。
 跟`HashMap`相似，把`HashEntry`改为了`Node`但作用不变，并且也引入了红黑树。
 
 ### ConcurrentHashMap in Java 7
 
-在`Java 7`及之前的版本中，采用了分段锁方案，其内部维护了一个`Segment`数组，`Segment`类继承于`ReentrantLock`类，当一个线程访问一个`Segment`对象时，不会影响到其他的`Segment`，
+在 Java 7及之前的版本中，采用了分段锁方案，其内部维护了一个`Segment`数组，`Segment`类继承于`ReentrantLock`类，当一个线程访问一个`Segment`对象时，不会影响到其他的`Segment`，
 换而言之，如果有一个`ConcurrentHashMap`的`segments`大小为`16`时，可以允许`16`个线程同时操作`16`个`Segment`，既线程安全，又不会发生竞争。
 
 ```java
@@ -219,7 +219,7 @@ public V put(K key, V value) {
 ```
 
 首先，调用`tryLock()`尝试获取锁，如果获取失败说明有其他线程存在竞争，随后调用`scanAndLockForPut(K key, int hash, V value)`自旋获取锁，
-如果重试的次数达到了`MAX_SCAN_RETRIES`则调用`lock()`用阻塞方式获取锁，防止`CPU`空转。
+如果重试的次数达到了`MAX_SCAN_RETRIES`则调用`lock()`用阻塞方式获取锁，防止 CPU 空转。
 获取到锁之后，通过`key`的`hashCode`在`table`中定位到`HashEntry`，
 若`value`不存在就新增`HashEntry`；若存在替换原`HashEntry`的`value`。
 
@@ -569,14 +569,14 @@ final Node<K,V>[] helpTransfer(Node<K,V>[] tab, Node<K,V> f) {
 #### `transfer(Node<K,V>[] tab, Node<K,V>[] nextTab)`方法 并发扩容
 
 `ConcurrentHashMap`采用的是分段扩容法，每个线程每次负责迁移一部分数据，每次迁移数据数量`stride`默认最小是`16`，其计算公式为`当前数组长度 / 8 / 可用CPU数量`，
-例如当前`table`长度为`1024`，CPU数量为`4`，则每个线程每次负责`1024/8/4=32`个单位。
+例如当前`table`长度为`1024`，CPU 数量为`4`，则每个线程每次负责`1024/8/4=32`个单位。
 
 `transferIndex`属性表示`table`上待迁移的位置，由右往左推进，例如：当前`transferIndex`值为`32`，`stride`值为`16`，则下一个线程负责区间为`[16,32)`，下下一个线程负责`[0,15)`。
 
 每个线程通过`CAS`操作尝试修改`transferIndex`，操作成功则各自负责所对应区间的迁移任务。
 
 ```java
-// 可用CPU数量
+// 可用 CPU 数量
 static final int NCPU = Runtime.getRuntime().availableProcessors();
 // 最小迁移步长
 private static final int MIN_TRANSFER_STRIDE = 16;

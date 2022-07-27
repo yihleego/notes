@@ -167,7 +167,7 @@ OPTIONS：
 - `-h`：指定容器的`hostname`
 - `-e`：设置环境变量
 - `--env-file`：从指定文件读入环境变量
-- `--cpuset`：绑定容器到指定CPU运行
+- `--cpuset`：绑定容器到指定 CPU 运行
 - `-m`:设置容器使用内存最大值
 - `--net`：指定容器的网络连接类型，支持`bridge/host/none/container`
 - `--link`：添加链接到另一个容器

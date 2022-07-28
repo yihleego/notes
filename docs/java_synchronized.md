@@ -157,7 +157,7 @@ _Java 15 之前，可以通过`-XX:-UseBiasedLocking`禁用偏向锁。_
 
 ### 重量级锁
 
-当一个轻量级锁自旋超过一定次数（默认 10 次），或被两个及以上的线程竞争的时候，轻量级锁就会膨胀为重量级锁。
+当一个轻量级锁自旋超过一定次数（默认 10 次），或被三个及以上的线程竞争的时候，轻量级锁就会膨胀为重量级锁。
 
 ![java_synchronized_heavyweight_locking](images/java_synchronized_heavyweight_locking.png)
 

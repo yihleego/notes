@@ -320,11 +320,11 @@ Monitor 被翻译为监视器或管程，每个 Java 对象都可以关联一个
 
 ![monitor](images/java_jvm_monitor.png)
 
-1. 默认情况下，Monitor 的 Owner 为 null
+1. 默认情况下，Monitor 的 Owner 为 null，表示无锁状态
 2. 当 Thread-2 进入同步代码块时，就会将 Monitor 的 Owner 设置为 Thread-2
 3. 在 Thread-2 同步的过程中，如果 Thread-3、Thread-4、Thread-5 也进入同步代码块时，就会被放入 EntryList 中，进入阻塞状态
 4. 在 Thread-2 退出同步代码块时，然后唤醒 EntryList 中等待的线程来竞争锁，竞争的时是非公平的
-5. 图中 WaitSet 中的存放的 Thread-0 和 Thread-1 是在同步代码块中，调用了`Object.wait()`的线程
+5. 图中 WaitSet 中的存放的 Thread-0 和 Thread-1 是在同步代码块中调用了`Object.wait()`的线程
     - `Object.wait()`会使线程等待，WaitSet 存放等待的线程
     - `Object.notify()`会唤醒一个 WaitSet 中的线程
     - `Object.notifyAll()`会唤醒 WaitSet 中的所有线程
@@ -351,6 +351,11 @@ SafePoint 在 HotSpot VM 中是一个核心的技术点，所谓安全点指的�
 
 偏向锁能够减少无竞争锁定时的开销，其目的是假定该锁一直由某个特定线程持有，直到另一个线程尝试获取它，这样就可以避免同一对象的后续同步操作执行 CAS 操作，减少了获取锁和释放锁的次数。
 
+通常，在应用程序启动后，偏向锁默认不会立即生效，而是存在几秒延迟，可以通过命令`-XX:BiasedLockingStartupDelay=0`关闭延迟。
+
+在 Java 15 之前，偏向锁始终处于启用状态且可用，可以通过`-XX:-UseBiasedLocking`禁用偏向锁。
+在 Java 15 及之后，启动 HotSpot 时将不再启用偏向锁，除非在命令行中设置`-XX:+UseBiasedLocking`启用偏向锁。
+
 Java 15 版本弃用了偏向锁：[JEP 374: Disable and Deprecate Biased Locking](https://openjdk.java.net/jeps/374)
 
 > 从历史上看，偏向锁使得 JVM 的性能得到了显著改善。但是过去看到的性能提升在今天远不那么明显。  
@@ -360,20 +365,58 @@ Java 15 版本弃用了偏向锁：[JEP 374: Disable and Deprecate Biased Lockin
 >
 > 偏向锁在同步子系统中引入了许多复杂的代码，并且还侵入了其他 HotSpot 组件。这种复杂性是理解代码各个部分的障碍，也是在同步子系统内进行重大设计更改的障碍。为此，我们希望禁用、弃用并最终移除对偏向锁的支持。
 
-_在 Java 15 之前，偏向锁始终处于启用状态且可用，可以通过`-XX:-UseBiasedLocking`禁用偏向锁。在 Java 15 及之后，启动 HotSpot 时将不再启用偏向锁，除非在命令行中设置`-XX:+UseBiasedLocking`启用偏向锁。_
+### 偏向锁相关流程
 
-_通常，在程序启动后，偏向锁默认不会立即生效，而是存在几秒延迟，可以通过命令`-XX:BiasedLockingStartupDelay=0`关闭延迟。_
+#### 匿名偏向
 
-示例中源码基于 OpenJDK 8u342-GA 版本。
+匿名偏向（anonymously biased）表示锁对象未偏向任何线程，也就是说该对象可以偏向任意一个线程，具体表现为 Mark Word 中 Thread ID 值为 0。
+应用程序时，如果启用了偏向锁，并且某个 class 没有关闭偏向锁模式，那么该 class 实例化出来的对象则是可偏向状态。
 
-### 获取偏向锁流程
+#### 加锁过程
+
+- 首次获取锁：处于匿名偏向状态的对象获取锁时，会尝试使用 CAS 操作将 Mark Word 中的 Thread ID 修改为当前线程，偏向当前线程。如果修改成功，则表示成功获得了偏向锁。如果修改失败，则表示存在竞争，需要撤销偏向锁，然后升级偏向锁。
+- 锁重入：偏向的线程就是当前线程时，在通过一些额外的检查后（后续会介绍），就会继续执行同步块的代码。由此可见，偏向锁重入只需要简单判断即可，同步性能开销基本可以忽略。
+- 发生竞争：偏向的线程不是当前线程时，则进入到撤销偏向锁的逻辑。待所有线程达到 SafePoint 时，判断偏向的线程是否还存活，如果线程存活且还在同步代码块中，则升级为轻量级锁，原偏向的线程会继续拥有锁。
+  如果偏向的线程已经死活或者不在同步代码块中，则将对象头的 Mark Word 改为无锁状态，之后再升级为轻量级锁。
+
+为什么发生竞争时，将对象头的 Mark Word 改为无锁状态，之后再升级为轻量级锁，而不是再次获取偏向锁呢？
+
+这种场景下，表示锁已经被多个线程使用，与偏向锁设计初衷不符，偏向锁适用场景为单线程，如果多线程场景下，频繁进行偏向锁撤销和更新偏向锁对象头的 Mark Word 中的 Thread ID，那么偏向锁的性能优势就不存在了。
+
+但是，在[批量重偏向](#批量重偏向与批量撤销介绍)的情况下，是会出现偏向另一个线程的情况。
+
+#### 解锁过程
+
+偏向锁退出同步代码块时，找到线程的栈中的最近一个关联的 Lock Record，其 obj 字段就表示锁的对象，将其设置为 NULL 就完成了释放锁的操作。
+
+#### 批量重偏向与批量撤销介绍
+
+从偏向锁的加锁解锁过程中可以看出，当只有一个线程反复进入同步块时，同步的性能开销基本可以忽略，但是当有其他线程尝试获得锁时，就需要等待线程到大 SafePoint 时，才能将偏向锁撤销为无锁状态，然后升级为轻量级锁或重量级锁。
+所以，偏向锁的撤销是有一定性能开销的，如果应用场景本身存在多线程竞争的，那么使用偏向锁不仅不能提高性能，而且会导致性能下降。因此，HotSpot 中增加了批量重偏向与批量撤销机制。
+
+- 批量重偏向（Bulk Rebias）解决的场景：一个线程创建了大量对象，并且进行了初始同步操作，然后在另一个线程中将这些对象作为锁进行之后的操作。
+- 批量撤销（Bulk Revoke）解决的场景：存在明显多线程竞争的场景。
+
+每个 class 都维护一个偏向锁撤销计数器，每一次该 class 的对象偏向撤销时，该计数器就会加 1，当值达到重偏向阈值（默认20）时，就会进行批量重偏向。
+
+每个 class 都维护一个 epoch 值，用于表示是第几代偏向锁。当该 class 的对象获取偏向锁时，会将该 epoch 值复制到锁对象的 Mark Word 中。
+每次批量重偏向时，该 class 的 epoch 值加 1，表示偏向锁进入下一代，之前的锁对象的 epoch 则过期，新获取偏向锁的对象则会复制新的 epoch 值。
+为了保证当前持有偏向锁的线程不会丢锁，还需要遍历所有线程的栈，找出该 class 已加锁的对象，将它们的 Mark Word 中的 epoch 值加 1（该操作需要所有线程处于安全点状态）。
+
+如果锁对象的 epoch 已经过期，再次获取锁时，不会直接进行偏向锁撤销，而是先通过 CAS 操作将其 Mark Word 的 Thread Id 更新当前线程。如果更新成功则表示偏向了新的线程，如果失败则需要进行偏向锁撤销和锁升级。
+
+当达到重偏向阈值（默认20）后，假设该 class 计数器继续增长，当其达到批量撤销阈值（默认40）时，就认为该 class 的使用场景存在多线程竞争，标记该 class 为不可偏向，此后，对于该 class 直接执行轻量级锁的逻辑。
+
+### 源码分析
+
+#### 获取偏向锁流程
 
 [/src/share/vm/runtime/basicLock.hpp#BasicObjectLock](https://github.com/openjdk/jdk8u/blob/2dadc2bf312d5f947e0735d5ec13c285824db31d/hotspot/src/share/vm/runtime/basicLock.hpp#L32)
 
 ```cpp
 class BasicLock VALUE_OBJ_CLASS_SPEC {
  private:
-  volatile markOop _displaced_header; // 被替换的对象头
+  volatile markOop _displaced_header; // 即 Displaced Mark Word，轻量级锁加锁时备份 Mark Word，解锁时还原
 };
 
 class BasicObjectLock VALUE_OBJ_CLASS_SPEC {
@@ -387,26 +430,27 @@ class BasicObjectLock VALUE_OBJ_CLASS_SPEC {
 
 ```cpp
 CASE(_monitorenter) : {
-    // lockee 是锁的对象
+    // lockee 是锁对象
     oop lockee = STACK_OBJECT(-1);
     // derefing's lockee ought to provoke implicit null check
     CHECK_NULL(lockee);
     // find a free monitor or one already allocated for this object
     // if we find a matching object then we need a new monitor
     // since this is recursive enter
-    // 第 1 步：找到一个空闲的 Lock Record，如下：
+    // 第 1 步：找到一个最高且空闲的 Lock Record，其目的是为了配合重入解锁和升级轻量级锁
     BasicObjectLock *limit = istate->monitor_base();
     BasicObjectLock *most_recent = (BasicObjectLock *) istate->stack_base();
     BasicObjectLock *entry = NULL;
+    // 从低往高遍历
     while (most_recent != limit) {
-        // a. 如果 obj 为 NULL 说明该 Lock Record 是空闲的，不中断循环的原因见[c]
+        // 如果 obj 为 NULL 说明该 Lock Record 是空闲的，需要找到最高且空闲的 Lock Record，所以这里不中断循环
         if (most_recent->obj() == NULL) entry = most_recent;
-        // b. 如果 obj 为 lockee 说明该 Lock Record 已经分配给该对象了，直接中断循环
+        // 如果 obj 为 lockee 说明之前获取过锁，且当前是锁重入，此时 entry 已经是最高且空闲的 Lock Record 了（或者没有空闲的），继续遍历已经没有意义了，直接中断循环
         else if (most_recent->obj() == lockee) break;
-        // c. 为了找到内存地址最高的空闲 Lock Record，因为寻址是从低往高的，所以需要一直判断到最后（这也就是为什么[a]条件成立时没有中断循环）
+        // 为了找到内存地址最高的空闲 Lock Record，所以需要一直判断到最后
         most_recent++;
     }
-    // 如果 entry 不为 NULL 说明存在空闲的 Lock Record（正常情况下都会有）
+    // 如果 entry 不为 NULL 说明该 Lock Record 可用（正常情况下都会有）
     if (entry != NULL) {
         // 第 2 步：将 Lock Record 的 obj 指针指向 lockee
         entry->set_obj(lockee);
@@ -424,13 +468,13 @@ CASE(_monitorenter) : {
             // 获取当前线程ID
             thread_ident = (uintptr_t) istate->thread();
             // 计算预期的偏向锁值
-            // a. lockee->klass()->prototype_header() | thread_ident：表示 线程ID + epoch + 分代年龄 + 偏向锁标识 + 锁标识，可以理解为组装一个 Mark Word
-            // b. ${a} ^ (uintptr_t) mark：将上面计算得到的结果与锁的对象的 Mark Word 进行异或，相等的位全部被置为 0，只剩下不相等的位
-            // c. ${b} & ~((uintptr_t) markOopDesc::age_mask_in_place)：实际作用为忽略分代年龄
+            // a. lockee->klass()->prototype_header() | thread_ident：表示 线程ID + epoch + 分代年龄 + 偏向锁标识 + 锁标识，可以理解为组装了一个预期的 Mark Word
+            // b. ${a} ^ (uintptr_t) mark：将上面计算得到的结果与锁对象的 Mark Word 进行异或操作，相等的位全部被置为 0，只剩下不相等的位，不相等的位置代表不同的含义
+            // c. ${b} & ~((uintptr_t) markOopDesc::age_mask_in_place)：作用为忽略分代年龄
             anticipated_bias_locking_value =
                     (((uintptr_t) lockee->klass()->prototype_header() | thread_ident) ^ (uintptr_t) mark) &
                     ~((uintptr_t) markOopDesc::age_mask_in_place);
-            // 第 4 步：如果计算的结果为 0，表示偏向的线程是当前线程，且 class 的 epoch 等于 Mark Word 的 epoch，这种情况下无需处理
+            // 第 4 步：如果计算的结果为 0，表示偏向的线程是当前线程，且 class 的 epoch 等于 Mark Word 的 epoch，这种情况下无需处理，这是使用偏向锁期望的情况
             if (anticipated_bias_locking_value == 0) {
                 // already biased towards this thread, nothing to do
                 if (PrintBiasedLockingStatistics) {
@@ -438,25 +482,26 @@ CASE(_monitorenter) : {
                 }
                 success = true;
             }
-            // 第 5 步：如果不是偏向模式，则尝试撤销偏向锁（即 class 的 prototype_header 最后三位不为 101）
+            // 第 5 步：如果 class 的 prototype_header 最后三位不为 101，说明 class 关闭了偏向模式，则尝试撤销偏向锁（批量撤销导致）
             else if ((anticipated_bias_locking_value & markOopDesc::biased_lock_mask_in_place) != 0) {
                 // try revoke bias
                 markOop header = lockee->klass()->prototype_header();
                 if (hash != markOopDesc::no_hash) {
                     header = header->copy_set_hash(hash);
                 }
-                // 通过 CAS 操作将锁的对象的 Mark Word 替换为 class 的 prototype_header，尝试撤销偏向锁
+                // 通过 CAS 操作将锁对象的 Mark Word 替换为 class 的 prototype_header，尝试撤销偏向锁
                 // Atomic::cmpxchg_ptr 需要三个参数：
-                // 1：新值，此处为 class 的 prototype_header
-                // 2：需要修改的指针，此处为锁的对象的 Mark Word 的指针
-                // 3：预期原值，此处为锁的对象的 Mark Word 的值
-                // 返回等于预期原值 mark，则说明修改成功
+                // 1：新值，此处为 class 的 prototype_header，不指向任何线程
+                // 2：需要修改的指针，此处为锁对象的 Mark Word 的指针
+                // 3：预期原值，此处为锁对象的 Mark Word 的值
+                // 返回等于 mark，则说明修改成功
                 if (Atomic::cmpxchg_ptr(header, lockee->mark_addr(), mark) == mark) {
                     if (PrintBiasedLockingStatistics)
                         (*BiasedLocking::revoked_lock_entry_count_addr())++;
                 }
+                // 此时 success 为 false，后续会执行轻量级锁逻辑
             }
-            // 第 6 步：如果 epoch 不相等（已过期），则尝试重偏向
+            // 第 6 步：如果 epoch 不相等，说明偏向锁已过期，则尝试重偏向（批量重偏向导致）
             else if ((anticipated_bias_locking_value & epoch_mask_in_place) != 0) {
                 // try rebias
                 // 构造一个偏向当前线程的 Mark Word
@@ -464,7 +509,7 @@ CASE(_monitorenter) : {
                 if (hash != markOopDesc::no_hash) {
                     new_header = new_header->copy_set_hash(hash);
                 }
-                // 通过 CAS 操作替换 Mark Word
+                // 通过 CAS 操作替换 Mark Word，尝试偏向当前线程
                 if (Atomic::cmpxchg_ptr((void *) new_header, lockee->mark_addr(), mark) == mark) {
                     if (PrintBiasedLockingStatistics)
                         (*BiasedLocking::rebiased_lock_entry_count_addr())++;
@@ -529,56 +574,7 @@ CASE(_monitorenter) : {
 }
 ```
 
-### 释放偏向锁流程
-
-[/src/share/vm/interpreter/bytecodeInterpreter.cpp#CASE_monitorexit](https://github.com/openjdk/jdk8u/blob/2dadc2bf312d5f947e0735d5ec13c285824db31d/hotspot/src/share/vm/interpreter/bytecodeInterpreter.cpp#L1923)
-
-```cpp
-CASE(_monitorexit) : {
-    // lockee 是锁的对象
-    oop lockee = STACK_OBJECT(-1);
-    CHECK_NULL(lockee);
-    // derefing's lockee ought to provoke implicit null check
-    // find our monitor slot
-    BasicObjectLock *limit = istate->monitor_base();
-    BasicObjectLock *most_recent = (BasicObjectLock *) istate->stack_base();
-    // 从低往高遍历栈的Lock Record
-    while (most_recent != limit) {
-        // 判断 Lock Record 关联的 obj 是否为 lockee
-        if ((most_recent)->obj() == lockee) {
-            BasicLock *lock = most_recent->lock();
-            markOop header = lock->displaced_header();
-            // 将 Lock Record 的 obj 设置为 NULL，表示释放锁
-            most_recent->set_obj(NULL);
-            // 如果不是偏向模式，则需要继续轻量级锁或重量级锁的释放流程
-            if (!lockee->mark()->has_bias_pattern()) {
-                bool call_vm = UseHeavyMonitors;
-                // If it isn't recursive we either must swap old header or call the runtime
-                // 如果 header != NULL 说明不是重入
-                if (header != NULL || call_vm) {
-                    // 通过 CAS 操作将 Displaced Mark Word 替换对象头的 Mark Word（轻量级锁）
-                    if (call_vm || Atomic::cmpxchg_ptr(header, lockee->mark_addr(), lock) != lock) {
-                        // 如果替换失败或者是重量级锁，则会进入这个分支
-
-                        // restore object for the slow case
-                        // 将 obj 还原，然后调用 monitorexit 方法，详情请见轻量级锁与重量级锁的说明
-                        most_recent->set_obj(lockee);
-                        CALL_VM(InterpreterRuntime::monitorexit(THREAD, most_recent), handle_exception);
-                    }
-                }
-            }
-            UPDATE_PC_AND_TOS_AND_CONTINUE(1, -1);
-        }
-        // 处理下一个 Lock Record
-        most_recent++;
-    }
-    // Need to throw illegal monitor state exception
-    CALL_VM(InterpreterRuntime::throw_illegal_monitor_state_exception(THREAD), handle_exception);
-    ShouldNotReachHere();
-}
-```
-
-### 撤销偏向锁流程
+#### 撤销偏向锁流程
 
 在[获取偏向锁流程](#获取偏向锁流程)中多次提到获取偏向锁失败会进入到`InterpreterRuntime::monitorenter`方法进行偏向锁撤销和锁升级，偏向锁撤销是指在获取偏向锁的过程因为不满足条件导致要将锁对象改为非偏向锁状态。
 
@@ -615,7 +611,7 @@ void ObjectSynchronizer::fast_enter(Handle obj, BasicLock *lock, bool attempt_re
     if (UseBiasedLocking) {
         if (!SafepointSynchronize::is_at_safepoint()) {
             // Java 线程会进入这个分支，调用 BiasedLocking::revoke_and_rebias 方法撤销和重偏向，是需要关注的关键方法
-            // 第 1 个参数：Handle 包含了当前线程和锁的对象
+            // 第 1 个参数：Handle 包含了当前线程和锁对象
             // 第 2 个参数：attempt_rebias 代表是否允许重偏向，这里固定为 true
             BiasedLocking::Condition cond = BiasedLocking::revoke_and_rebias(obj, attempt_rebias, THREAD);
             if (cond == BiasedLocking::BIAS_REVOKED_AND_REBIASED) {
@@ -675,7 +671,7 @@ BiasedLocking::Condition BiasedLocking::revoke_and_rebias(Handle obj, bool attem
             markOop res_mark = (markOop) Atomic::cmpxchg_ptr(prototype_header, obj->mark_addr(), mark);
             assert(!(*(obj->mark_addr()))->has_bias_pattern(), "even if we raced, should still be revoked");
             return BIAS_REVOKED;
-            // 如果 epoch 已过期会进入这个分支（当前流程不会进入这个分支）
+        // 如果 epoch 已过期会进入这个分支（当前流程不会进入这个分支）
         } else if (prototype_header->bias_epoch() != mark->bias_epoch()) {
             // The epoch of this biasing has expired indicating that the
             // object is effectively unbiased. Depending on whether we need
@@ -816,7 +812,7 @@ static BiasedLocking::Condition revoke_bias(oop obj, bool allow_rebias, bool is_
     }
 
     // Handle case where the thread toward which the object was biased has exited
-    // 判断持有偏向锁的线程是否存活
+    // 判断偏向的线程是否存活
     bool thread_is_alive = false;
     if (requesting_thread == biased_thread) {
         // 如果是当前线程，则说一定是存活的
@@ -824,14 +820,14 @@ static BiasedLocking::Condition revoke_bias(oop obj, bool allow_rebias, bool is_
     } else {
         // 遍历所有 Java 线程
         for (JavaThread *cur_thread = Threads::first(); cur_thread != NULL; cur_thread = cur_thread->next()) {
-            // 如果找到了，则说明持有偏向锁的线程还存活
+            // 如果找到了，则说明偏向的线程还存活
             if (cur_thread == biased_thread) {
                 thread_is_alive = true;
                 break;
             }
         }
     }
-    // 如果持有偏向锁的线程已经死亡，则进入这个分支，直接撤销偏向锁
+    // 如果偏向的线程已经死亡，则进入这个分支，直接撤销偏向锁
     if (!thread_is_alive) {
         if (allow_rebias) {
             // 允许重偏向，则设置 Mark Word 为匿名偏向
@@ -851,13 +847,13 @@ static BiasedLocking::Condition revoke_bias(oop obj, bool allow_rebias, bool is_
     // write down the needed displaced headers to the thread's stack.
     // Otherwise, restore the object's header either to the unlocked
     // or unbiased state.
-    // 如果代码执行到这里，则说明持有偏向锁的线程还存活，遍历线程栈中所有的 Lock Record，根据情况进行重偏向或升级为轻量级锁
+    // 如果代码执行到这里，则说明偏向的线程还存活，遍历线程栈中所有的 Lock Record，根据情况进行重偏向或升级为轻量级锁
     GrowableArray<MonitorInfo *> *cached_monitor_info = get_or_compute_monitor_info(biased_thread);
     BasicLock *highest_lock = NULL;
     for (int i = 0; i < cached_monitor_info->length(); i++) {
         MonitorInfo *mon_info = cached_monitor_info->at(i);
-        // 判断是否存在 Lock Record 关联锁的对象，回顾偏向锁的加锁解锁流程：
-        // - 进入同步代码块时（monitorenter），会在栈中按从高往低的顺序，找到第一个空闲的 Lock Record，将其 obj 字段指向锁的对象
+        // 判断是否存在 Lock Record 关联锁对象，回顾偏向锁的加锁解锁流程：
+        // - 进入同步代码块时（monitorenter），会在栈中按从高往低的顺序，找到第一个空闲的 Lock Record，将其 obj 字段指向锁对象
         // - 离开同步代码块时（monitorexit），会按从低往高的顺序，找到第一个关联的 Lock Record，将其 obj 字段置空
         // 所以可以通过遍历线程栈中的 Lock Record 判断偏向锁的线程是否还在执行同步代码块中的代码
         if (mon_info->owner() == obj) {
@@ -867,7 +863,8 @@ static BiasedLocking::Condition revoke_bias(oop obj, bool allow_rebias, bool is_
                               p2i((void *) obj));
             }
             // Assume recursive case and fix up highest lock later
-            // 进入这个分支，说明需要升级为轻量级锁，为了处理锁重入的场景，将 Lock Record 的 Displaced Mark Word 先置为 NULL，最高位的 Lock Record 会在下面的代码中再处理
+            // 进入这个分支，说明需要升级为轻量级锁，为了处理锁重入的场景，将 Lock Record 的 Displaced Mark Word 先置为 NULL
+            // 遍历结束后，highest_lock 即是最高位的 Lock Record，升级轻量级锁会下面的代码中进行
             markOop mark = markOopDesc::encode((BasicLock *) NULL);
             highest_lock = mon_info->lock();
             highest_lock->set_displaced_header(mark);
@@ -897,10 +894,10 @@ static BiasedLocking::Condition revoke_bias(oop obj, bool allow_rebias, bool is_
         // 升级轻量级锁总结：
         // 1. 将偏向线程所有相关 Lock Record 的 Displaced Mark Word 置为 NULL，表示把原偏向线程的所有 Lock Record 都已经变成轻量级锁的状态
         // 2. 将最高位的 Lock Record 的 Displaced Mark Word 设置为无锁状态，上述代码中 highest_lock 就是最高位的 Lock Record，最高位即是第一次获得锁时的 Lock Record，因为偏向锁可以重入
-        // 3. 将对象头的 Mark Word 指向最高位的 Lock Record，由于在 SafePoint，所以不需要用 CAS 操作
+        // 3. 在对象头的 Mark Word 中储存最高位的 Lock Record 的指针，由于此处在 SafePoint（STW），所以不需要用 CAS 操作
         // 4. 至此，升级轻量级锁完成
     } else {
-        // 进入这个分支，说明持有偏向锁的线程已经不在同步块中了
+        // 进入这个分支，说明偏向的线程已经不在同步块中了
         if (TraceBiasedLocking && (Verbose || !is_bulk)) {
             tty->print_cr("  Revoked bias of currently-unlocked object");
         }
@@ -925,9 +922,69 @@ static BiasedLocking::Condition revoke_bias(oop obj, bool allow_rebias, bool is_
 }
 ```
 
-### 批量重偏向与批量撤销
+#### 释放偏向锁流程
+
+[/src/share/vm/interpreter/bytecodeInterpreter.cpp#CASE_monitorexit](https://github.com/openjdk/jdk8u/blob/2dadc2bf312d5f947e0735d5ec13c285824db31d/hotspot/src/share/vm/interpreter/bytecodeInterpreter.cpp#L1923)
+
+```cpp
+CASE(_monitorexit) : {
+    // lockee 是锁对象
+    oop lockee = STACK_OBJECT(-1);
+    CHECK_NULL(lockee);
+    // derefing's lockee ought to provoke implicit null check
+    // find our monitor slot
+    BasicObjectLock *limit = istate->monitor_base();
+    BasicObjectLock *most_recent = (BasicObjectLock *) istate->stack_base();
+    // 从低往高遍历栈的Lock Record
+    while (most_recent != limit) {
+        // 判断 Lock Record 关联的 obj 是否为 lockee
+        if ((most_recent)->obj() == lockee) {
+            BasicLock *lock = most_recent->lock();
+            markOop header = lock->displaced_header();
+            // 将 Lock Record 的 obj 设置为 NULL，表示释放锁
+            most_recent->set_obj(NULL);
+            // 如果不是偏向模式，则需要继续轻量级锁或重量级锁的释放流程
+            if (!lockee->mark()->has_bias_pattern()) {
+                bool call_vm = UseHeavyMonitors;
+                // If it isn't recursive we either must swap old header or call the runtime
+                // 如果 header != NULL 说明不是重入
+                if (header != NULL || call_vm) {
+                    // 通过 CAS 操作将 Displaced Mark Word 替换对象头的 Mark Word（轻量级锁）
+                    if (call_vm || Atomic::cmpxchg_ptr(header, lockee->mark_addr(), lock) != lock) {
+                        // 如果替换失败或者是重量级锁，则会进入这个分支
+
+                        // restore object for the slow case
+                        // 将 obj 还原，然后调用 monitorexit 方法，详情请见轻量级锁与重量级锁的说明
+                        most_recent->set_obj(lockee);
+                        CALL_VM(InterpreterRuntime::monitorexit(THREAD, most_recent), handle_exception);
+                    }
+                }
+            }
+            // 处理完毕
+            UPDATE_PC_AND_TOS_AND_CONTINUE(1, -1);
+        }
+        // 如果不是关联的 obj，继续判断下一个 Lock Record
+        most_recent++;
+    }
+    // Need to throw illegal monitor state exception
+    CALL_VM(InterpreterRuntime::throw_illegal_monitor_state_exception(THREAD), handle_exception);
+    ShouldNotReachHere();
+}
+```
+
+#### 批量重偏向与批量撤销
 
 TODO
+
+### Identity Hash Code
+
+Identity Hash Code 是指未被重写的`java.lang.Object.hashCode()`或者`java.lang.System.identityHashCode(Object)`方法所返回的值，非用户自定义的`hashCode()`方法。
+
+如果一个对象已经计算过 Identity Hash Code，那么它就无法使用偏向锁了。从 Mark Word 结构可以发现，无锁状态时，有足够空间可以储存 31 位的 Hash Code，而偏向锁状态下没有。
+对该对象加锁时，会直接升级为轻量级锁。
+
+如果一个对象当前正处于偏向锁状态中，并且需要计算 Identity Hash Code 时，则它的偏向锁会被撤销，并且锁会膨胀为重量级锁。
+重量锁的实现中，ObjectMonitor 类里有字段可以记录非加锁状态下的 Mark Word。
 
 ## 轻量级锁 Lightweight Locking
 

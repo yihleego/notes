@@ -60,7 +60,7 @@ public synchronized void foo() {
 
 通过`javap -v SynchronizedStyle.java`命令反编译以下类：
 
-```
+```java
 public class SynchronizedStyle {
     private final Object lock = new Object();
 
@@ -87,7 +87,7 @@ public class SynchronizedStyle {
 }
 ```
 
-```text
+```java
 Classfile /synchronized-markword/target/classes/io/leego/test/SynchronizedStyle.class
   Last modified 2022年7月29日; size 1007 bytes
   SHA-256 checksum e7727ab627c0fb18699ce95d4405689f7ceaebf84bb71ecd24bc940b1bc794c3
@@ -382,7 +382,6 @@ Java 15 版本弃用了偏向锁：[JEP 374: Disable and Deprecate Biased Lockin
 > 为什么发生竞争时，将对象头的 Mark Word 改为无锁状态，之后再升级为轻量级锁，而不是再次获取偏向锁呢？
 >
 > 这种场景下，表示锁已经被多个线程使用，与偏向锁设计初衷不符，偏向锁适用场景为单线程，如果多线程场景下，频繁进行偏向锁撤销，那么偏向锁的性能优势就不存在了。
->
 > 但是，在[批量重偏向](#批量重偏向与批量撤销)的情况下，是会出现偏向另一个线程的情况。
 
 #### 解锁流程

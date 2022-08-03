@@ -37,9 +37,9 @@
 - Solutions
     - [Seata ☀️](docs/seata.md)
     - [ShardingSphere 🌧️](docs/shardingsphere.md)
-- Others
-    - [Algorithm 🌧️](docs/algorithm.md)
-    - [Business 🌧️](docs/business.md)
+- DevOps
     - [Docker 🌧️](docs/docker.md)
     - [Kubernetes 🌧️](docs/kubernetes.md)
-    - [Testing 🌧️](docs/testing.md)
+- Testing
+    - [JUnit 🌧️](docs/junit.md)
+    - [JMeter 🌧️](docs/jmeter.md)

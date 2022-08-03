@@ -58,7 +58,7 @@ public synchronized void foo() {
 
 ## synchronized 使用方式的区别
 
-通过`javap -v SynchronizedStyle.java`命令反编译以下类：
+通过`javap -v`命令反编译示例代码：
 
 ```java
 public class SynchronizedStyle {
@@ -89,7 +89,6 @@ public class SynchronizedStyle {
 
 ```java
 Classfile /synchronized-markword/target/classes/io/leego/test/SynchronizedStyle.class
-  Last modified 2022年7月29日; size 1007 bytes
   SHA-256 checksum e7727ab627c0fb18699ce95d4405689f7ceaebf84bb71ecd24bc940b1bc794c3
   Compiled from "SynchronizedStyle.java"
 public class io.leego.test.SynchronizedStyle
@@ -275,13 +274,12 @@ Constant pool:
         frame_type = 250 /* chop */
           offset_delta = 4
 }
-SourceFile: "SynchronizedStyle.java"
 ```
 
 从反编译结果可以得：
 
-- 同步代码块：`javac`编译时，会生成`monitorenter`和`monitorexit`指令，分别对应进入同步代码块和退出同步代码块。存在两个`monitorexit`指令的原因是，保证抛出异常的情况下也可以释放锁，为同步代码块包装了隐式的`try-finally`，在`finally`中调用了`monitorexit`指令。
-- 同步方法：`javac`编译时，会通过`ACC_SYNCHRONIZED`关键字修饰，JVM 执行方法时，发现存在`ACC_SYNCHRONIZED`关键字，则会先尝试获取锁。
+- 同步代码块：编译时，会生成`monitorenter`和`monitorexit`指令，分别对应进入同步代码块和退出同步代码块。存在两个`monitorexit`指令的原因是，为同步代码块包装了隐式的`try-finally`，在`finally`中调用了`monitorexit`指令，保证抛出异常的情况下也可以释放锁。
+- 同步方法：编译时，会通过`ACC_SYNCHRONIZED`关键字修饰，JVM 执行方法时，发现存在`ACC_SYNCHRONIZED`关键字，则会先尝试获取锁。
 
 在 JVM 底层中，这两种`synchronized`方式的实现基本相同。
 

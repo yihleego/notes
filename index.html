@@ -11,8 +11,21 @@
     <link href="https://cdnjs.cloudflare.com/ajax/libs/docsify/4.12.2/themes/vue.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/docsify-darklight-theme/3.2.0/style.min.css" rel="stylesheet">
     <style>
+        @f
+        .token.string {
+            color: var(--codeStringColor) !important;
+        }
+
+        .token.comment {
+            color: var(--codeCommentColor) !important;
+        }
+
         .punctuation {
             color: var(--codeTextColor) !important;
+        }
+
+        a:hover {
+            text-decoration: underline;
         }
     </style>
 </head>
@@ -24,18 +37,28 @@
         subMaxLevel: 2,
         auto2top: false,
         darklightTheme: {
-            defaultTheme: 'light',
-            siteFont: 'Source Sans Pro,Helvetica Neue,Arial,sans-serif',
+            defaultTheme: 'dark',
+            siteFont: 'Source Sans Pro, Helvetica Neue, Arial, sans-serif',
             codeFontFamily: 'Roboto Mono, Monaco, courier, monospace',
-            bodyFontSize: '15px',
+            bodyFontSize: '16px',
             dark: {
-                background: 'rgb(28,32,34)',
+                accent: '#539bf5',
+                textColor: '#adbac7',
+                codeTextColor: '#a9b7c6',
+                codeBackgroundColor: '#2d333b',
+                background: '#22272e',
                 highlightColor: '#e96900',
-                codeBackgroundColor: 'rgb(34,39,46)',
-                codeTextColor: '#b4b4b4',
+                borderColor: '#444c56',
+                sidebarSublink: '#adbac7',
+                blockQuoteColor: '#768390',
+                codeStringColor: '#629755',
+                codeCommentColor: '#808080',
             },
             light: {
+                accent: '#539bf5',
                 highlightColor: '#e96900',
+                codeStringColor: '#629755',
+                codeCommentColor: '#808080',
             }
         },
         search: {

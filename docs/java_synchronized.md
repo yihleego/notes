@@ -10,92 +10,80 @@ Java 中有两种加锁的方式：一种是用`synchronized`关键字，另一�
 | 是否是公平锁   | 非公平锁          | 可通过构造方法指定公平或非公平                      |
 | 是否可主动释放锁 | 不可主动释放        | 可主动释放，调用`unlock()`方法                 |
 
-## synchronized 使用方式
+## 使用方式
 
-### 作用对象
-
-作用在代码块并指定对象时，锁指定对象。
+锁对象
 
 ```java
-public synchronized void foo() {
-    synchronized (bar) {
+public void lockObject() {
+    synchronized (lock) {
         // ...
     }
 }
 ```
 
-### 作用方法
-
-修饰在非静态方法上时，锁当前对象。
+锁方法，即锁该方法的对象
 
 ```java
-public synchronized void foo() {
+public synchronized void lockMethod() {
     // ...
 }
 ```
 
-### 作用静态方法
-
-修饰在静态方法上时，锁当前类。
+锁类
 
 ```java
-public static synchronized void foo() {
-    // ...
-}
-```
-
-### 作用类
-
-作用在代码块并指定类时，锁指定类。
-
-```java
-public synchronized void foo() {
-    synchronized (Bar.class) {
+public void lockClass() {
+    synchronized (Lock.class) {
         // ...
     }
 }
 ```
 
-## synchronized 使用方式的区别
+锁静态方法，即锁该静态方法的类
+
+```java
+public static synchronized void lockStaticMethod() {
+    // ...
+}
+```
+
+### 不同方式的区别
 
 通过`javap -v`命令反编译示例代码：
 
 ```java
-public class SynchronizedStyle {
+public class SynchronizedTest {
     private final Object lock = new Object();
 
-    public void syncObject() {
+    public void lockObject() {
         synchronized (lock) {
-            System.out.println("syncObject");
+            System.out.println("lockObject");
         }
     }
 
-    public synchronized void syncMethod() {
-        System.out.println("syncMethod");
+    public synchronized void lockMethod() {
+        System.out.println("lockMethod");
     }
 
-
-    public static synchronized void syncStaticMethod() {
-        System.out.println("syncObject");
-    }
-
-    public void syncClass() {
-        synchronized (SynchronizedStyle.class) {
-            System.out.println("syncBlock");
+    public void lockClass() {
+        synchronized (SynchronizedTest.class) {
+            System.out.println("lockClass");
         }
+    }
+
+    public static synchronized void lockStaticMethod() {
+        System.out.println("lockStaticMethod");
     }
 }
 ```
 
 ```java
-Classfile /synchronized-markword/target/classes/io/leego/test/SynchronizedStyle.class
-  SHA-256 checksum e7727ab627c0fb18699ce95d4405689f7ceaebf84bb71ecd24bc940b1bc794c3
-  Compiled from "SynchronizedStyle.java"
-public class io.leego.test.SynchronizedStyle
+public class io.leego.test.SynchronizedTest
   minor version: 0
   major version: 52
   flags: (0x0021) ACC_PUBLIC, ACC_SUPER
-  this_class: #8                          // io/leego/test/SynchronizedStyle
+  this_class: #8                          // io/leego/test/SynchronizedTest
   super_class: #2                         // java/lang/Object
   interfaces: 0, fields: 1, methods: 5, attributes: 1
 Constant pool:
@@ -105,10 +93,10 @@ Constant pool:
    #4 = Utf8               java/lang/Object
    #5 = Utf8               <init>
    #6 = Utf8               ()V
-   #7 = Fieldref           #8.#9          // io/leego/test/SynchronizedStyle.lock:Ljava/lang/Object;
-   #8 = Class              #10            // io/leego/test/SynchronizedStyle
+   #7 = Fieldref           #8.#9          // io/leego/test/SynchronizedTest.lock:Ljava/lang/Object;
+   #8 = Class              #10            // io/leego/test/SynchronizedTest
    #9 = NameAndType        #11:#12        // lock:Ljava/lang/Object;
-  #10 = Utf8               io/leego/test/SynchronizedStyle
+  #10 = Utf8               io/leego/test/SynchronizedTest
   #11 = Utf8               lock
   #12 = Utf8               Ljava/lang/Object;
   #13 = Fieldref           #14.#15        // java/lang/System.out:Ljava/io/PrintStream;
@@ -117,32 +105,32 @@ Constant pool:
   #16 = Utf8               java/lang/System
   #17 = Utf8               out
   #18 = Utf8               Ljava/io/PrintStream;
-  #19 = String             #20            // syncObject
-  #20 = Utf8               syncObject
+  #19 = String             #20            // lockObject
+  #20 = Utf8               lockObject
   #21 = Methodref          #22.#23        // java/io/PrintStream.println:(Ljava/lang/String;)V
   #22 = Class              #24            // java/io/PrintStream
   #23 = NameAndType        #25:#26        // println:(Ljava/lang/String;)V
   #24 = Utf8               java/io/PrintStream
   #25 = Utf8               println
   #26 = Utf8               (Ljava/lang/String;)V
-  #27 = String             #28            // syncMethod
-  #28 = Utf8               syncMethod
-  #29 = String             #30            // syncBlock
-  #30 = Utf8               syncBlock
-  #31 = Utf8               Code
-  #32 = Utf8               LineNumberTable
-  #33 = Utf8               LocalVariableTable
-  #34 = Utf8               this
-  #35 = Utf8               Lio/leego/test/SynchronizedStyle;
-  #36 = Utf8               StackMapTable
-  #37 = Class              #38            // java/lang/Throwable
-  #38 = Utf8               java/lang/Throwable
-  #39 = Utf8               syncStaticMethod
-  #40 = Utf8               syncClass
+  #27 = String             #28            // lockMethod
+  #28 = Utf8               lockMethod
+  #29 = String             #30            // lockClass
+  #30 = Utf8               lockClass
+  #31 = String             #32            // lockStaticMethod
+  #32 = Utf8               lockStaticMethod
+  #33 = Utf8               Code
+  #34 = Utf8               LineNumberTable
+  #35 = Utf8               LocalVariableTable
+  #36 = Utf8               this
+  #37 = Utf8               Lio/leego/test/SynchronizedTest;
+  #38 = Utf8               StackMapTable
+  #39 = Class              #40            // java/lang/Throwable
+  #40 = Utf8               java/lang/Throwable
   #41 = Utf8               SourceFile
-  #42 = Utf8               SynchronizedStyle.java
+  #42 = Utf8               SynchronizedTest.java
 {
-  public io.leego.test.SynchronizedStyle();
+  public io.leego.test.SynchronizedTest();
     descriptor: ()V
     flags: (0x0001) ACC_PUBLIC
     Code:
@@ -160,9 +148,9 @@ Constant pool:
         line 7: 4
       LocalVariableTable:
         Start  Length  Slot  Name   Signature
-            0      16     0  this   Lio/leego/test/SynchronizedStyle;
+            0      16     0  this   Lio/leego/test/SynchronizedTest;
 
-  public void syncObject();
+  public void lockObject();
     descriptor: ()V
     flags: (0x0001) ACC_PUBLIC
     Code:
@@ -173,7 +161,7 @@ Constant pool:
          5: astore_1
          6: monitorenter
          7: getstatic     #13                 // Field java/lang/System.out:Ljava/io/PrintStream;
-        10: ldc           #19                 // String syncObject
+        10: ldc           #19                 // String lockObject
         12: invokevirtual #21                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
         15: aload_1
         16: monitorexit
@@ -195,22 +183,22 @@ Constant pool:
         line 13: 25
       LocalVariableTable:
         Start  Length  Slot  Name   Signature
-            0      26     0  this   Lio/leego/test/SynchronizedStyle;
+            0      26     0  this   Lio/leego/test/SynchronizedTest;
       StackMapTable: number_of_entries = 2
         frame_type = 255 /* full_frame */
           offset_delta = 20
-          locals = [ class io/leego/test/SynchronizedStyle, class java/lang/Object ]
+          locals = [ class io/leego/test/SynchronizedTest, class java/lang/Object ]
           stack = [ class java/lang/Throwable ]
         frame_type = 250 /* chop */
           offset_delta = 4
 
-  public synchronized void syncMethod();
+  public synchronized void lockMethod();
     descriptor: ()V
     flags: (0x0021) ACC_PUBLIC, ACC_SYNCHRONIZED
     Code:
       stack=2, locals=1, args_size=1
          0: getstatic     #13                 // Field java/lang/System.out:Ljava/io/PrintStream;
-         3: ldc           #27                 // String syncMethod
+         3: ldc           #27                 // String lockMethod
          5: invokevirtual #21                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
          8: return
       LineNumberTable:
@@ -218,32 +206,19 @@ Constant pool:
         line 17: 8
       LocalVariableTable:
         Start  Length  Slot  Name   Signature
-            0       9     0  this   Lio/leego/test/SynchronizedStyle;
+            0       9     0  this   Lio/leego/test/SynchronizedTest;
 
-  public static synchronized void syncStaticMethod();
-    descriptor: ()V
-    flags: (0x0029) ACC_PUBLIC, ACC_STATIC, ACC_SYNCHRONIZED
-    Code:
-      stack=2, locals=0, args_size=0
-         0: getstatic     #13                 // Field java/lang/System.out:Ljava/io/PrintStream;
-         3: ldc           #19                 // String syncObject
-         5: invokevirtual #21                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
-         8: return
-      LineNumberTable:
-        line 21: 0
-        line 22: 8
-
-  public void syncClass();
+  public void lockClass();
     descriptor: ()V
     flags: (0x0001) ACC_PUBLIC
     Code:
       stack=2, locals=3, args_size=1
-         0: ldc           #8                  // class io/leego/test/SynchronizedStyle
+         0: ldc           #8                  // class io/leego/test/SynchronizedTest
          2: dup
          3: astore_1
          4: monitorenter
          5: getstatic     #13                 // Field java/lang/System.out:Ljava/io/PrintStream;
-         8: ldc           #29                 // String syncBlock
+         8: ldc           #29                 // String lockClass
         10: invokevirtual #21                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
         13: aload_1
         14: monitorexit
@@ -259,37 +234,51 @@ Constant pool:
              5    15    18   any
             18    21    18   any
       LineNumberTable:
-        line 25: 0
-        line 26: 5
-        line 27: 13
-        line 28: 23
+        line 20: 0
+        line 21: 5
+        line 22: 13
+        line 23: 23
       LocalVariableTable:
         Start  Length  Slot  Name   Signature
-            0      24     0  this   Lio/leego/test/SynchronizedStyle;
+            0      24     0  this   Lio/leego/test/SynchronizedTest;
       StackMapTable: number_of_entries = 2
         frame_type = 255 /* full_frame */
           offset_delta = 18
-          locals = [ class io/leego/test/SynchronizedStyle, class java/lang/Object ]
+          locals = [ class io/leego/test/SynchronizedTest, class java/lang/Object ]
           stack = [ class java/lang/Throwable ]
         frame_type = 250 /* chop */
           offset_delta = 4
+
+  public static synchronized void lockStaticMethod();
+    descriptor: ()V
+    flags: (0x0029) ACC_PUBLIC, ACC_STATIC, ACC_SYNCHRONIZED
+    Code:
+      stack=2, locals=0, args_size=0
+         0: getstatic     #13                 // Field java/lang/System.out:Ljava/io/PrintStream;
+         3: ldc           #31                 // String lockStaticMethod
+         5: invokevirtual #21                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+         8: return
+      LineNumberTable:
+        line 26: 0
+        line 27: 8
 }
 ```
 
 从反编译结果可以得：
 
-- 同步代码块：编译时，会生成`monitorenter`和`monitorexit`指令，分别对应进入同步代码块和退出同步代码块。存在两个`monitorexit`指令的原因是，为同步代码块包装了隐式的`try-finally`，在`finally`中调用了`monitorexit`指令，保证抛出异常的情况下也可以释放锁。
-- 同步方法：编译时，会通过`ACC_SYNCHRONIZED`关键字修饰，JVM 执行方法时，发现存在`ACC_SYNCHRONIZED`关键字，则会先尝试获取锁。
+- 同步代码块：编译`lockObject()`和`lockClass()`方法时，会生成`monitorenter`和`monitorexit`指令，分别对应进入同步代码块和退出同步代码块。
+  存在两个`monitorexit`指令的原因是：对同步代码块隐式包装了`try-catch`，为了保证抛出异常的情况下也可以释放锁。
+- 同步方法：编译`lockMethod()`和`lockStaticMethod()`方法时，会通过`ACC_SYNCHRONIZED`关键字修饰，JVM 执行到该方法时，会先尝试获取锁。
 
-在 JVM 底层中，这两种`synchronized`方式的实现基本相同。
+在 JVM 底层中，这几种`synchronized`方式的实现基本相同。
 
-## synchronized 锁类型
+## 锁升级前置介绍
 
 在 Java 6 版本之前，Java 仅支持[重量级锁](#重量级锁-Heavyweight-Locking)，在 Java 6 版本中引入了[偏向锁](#偏向锁-Biased-Locking)和[轻量级锁](#轻量级锁-Lightweight-Locking)。
 
 引入的目的是为了在无锁竞争或少竞争的情况下，避免使用重量级锁。因为重量级锁依赖于系统级别的同步函数，在 Linux 中使用`mutex`互斥锁，底层实现依赖于`futex`，这些同步函数都涉及到用户态和内核态的切换、进程的上下文切换，会带来一定的性能开销。
 
-## Mark Word
+### Mark Word
 
 在 Java 中任意对象都可以当作锁，因此需要维护一个对象和锁的映射关系，比如，当前哪个线程持有锁，哪些线程在等待。
 Java 选择将这个映射关系存储在对象头中，其中还包括了 HashCode、GC 相关的信息，该区域被称为 Mark Word。
@@ -310,31 +299,12 @@ Java 选择将这个映射关系存储在对象头中，其中还包括了 HashC
 - 轻量级锁：Mark Word 储存了指向线程栈帧中 Lock Record 的指针，偏向锁标识为`0`，锁标识为`00`。
 - 重量级锁：Mark Word 储存了指向堆中的 Monitor 对象的指针，偏向锁标识为`0`，锁标识为`10`。
 
-不同 Java 版本中，使用`synchronized`对应 Mark Word 的变化可以看[这篇文档](https://github.com/yihleego/synchronized-markword)。
+### SafePoint
 
-## 管程 Monitor
-
-Monitor 被翻译为监视器或管程，每个 Java 对象都可以关联一个 Monitor 对象，使用 synchronized 获取对象的重量级锁之后，该对象头的 Mark Word 中就被设置指向 Monitor 对象的指针。Monitor 的结构如下：
-
-![monitor](images/java_jvm_monitor.png)
-
-1. 默认情况下，Monitor 的 Owner 为 null，表示无锁状态
-2. 当 Thread-2 进入同步代码块时，就会将 Monitor 的 Owner 设置为 Thread-2
-3. 在 Thread-2 同步的过程中，如果 Thread-3、Thread-4、Thread-5 也进入同步代码块时，就会被放入 EntryList 中，进入阻塞状态
-4. 在 Thread-2 退出同步代码块时，然后唤醒 EntryList 中等待的线程来竞争锁，竞争的时是非公平的
-5. 图中 WaitSet 中的存放的 Thread-0 和 Thread-1 是在同步代码块中调用了`Object.wait()`的线程
-    - `Object.wait()`会使线程等待，WaitSet 存放等待的线程
-    - `Object.notify()`会唤醒一个 WaitSet 中的线程
-    - `Object.notifyAll()`会唤醒 WaitSet 中的所有线程
-
-这些方法用于线程之间进行协作，属于`Object`对象的方法，因此调用这些方法必须在同步代码块内。
-
-## 安全点 SafePoint
-
-SafePoint 在 HotSpot VM 中是一个核心的技术点，所谓安全点指的是代码执行过程中被选择出来的一些位置，当需要执行一些要 STW（Stop The World） 的操作的时候，这些位置⽤于线程进⼊这些位置并等待系统执⾏完成 STW 操作。
+SafePoint 在 HotSpot 中是一个核心的技术点，所谓安全点指的是代码执行过程中被选择出来的一些位置，当需要执行一些要 STW（Stop The World） 的操作的时候，这些位置⽤于线程进⼊这些位置并等待系统执⾏完成 STW 操作。
 所以，安全点不能太少也不能太多，安全点过少会导致那些需要执⾏ STW 操作的程序需要等待太久，安全点太多⼜会导致程序执⾏时需要频繁检查安全点，导致系统负载升⾼。
 
-在 HotSpot VM 中，需要 STW 的操作典型的是 GC，GC 时需要所有线程同时进入安全点，并阻塞等待 GC 处理完，然后再让所有线程继续执行。
+在 HotSpot 中，需要 STW 的操作典型的是 GC，GC 时需要所有线程同时进入安全点，并阻塞等待 GC 处理完，然后再让所有线程继续执行。
 
 除了 GC 还有一些场景会让所有线程进入 SafePoint，即发生 STW：
 
@@ -344,6 +314,61 @@ SafePoint 在 HotSpot VM 中是一个核心的技术点，所谓安全点指的�
 4. Java Instrument 导致的 Agent 加载以及类的重定义
 5. 当发生 JIT 编译优化或者去优化，需要 OSR 或者 Bailout 或者清理代码缓存的时候
 6. 如果开启了 JFR 的 OldObject 采集，这个是定时采集一些存活时间比较久的对象
+
+### Monitor
+
+Monitor 是一个同步工具，它的特点是，同一个时刻，只有一个`进程/线程`能进入 Monitor 中定义的临界区，这使得 Monitor 能够达到互斥的效果。
+但仅仅有互斥的作用是不够的，无法进入临界区的`进程/线程`应该被阻塞，并且在必要的时候会被唤醒。
+当然，Monitor 也提供这样的管理`进程/线程`状态的机制，它在内部实现这些机制，并且对外屏蔽掉这些机制，使得使用 Monitor 的人看到的是一个简洁易用的接口。
+在编程中使用`semaphore`信号量和`mutex`互斥量容易出错，因为我们需要亲自操作变量以及对`进程/线程`进行阻塞和唤醒，所以 Monitor 被称为“更高级的原语”。
+
+Monitor 是操作系统提出来的一种高级原语，但其具体的实现模式，不同的编程语言都有可能不一样。下文会介绍 Monitor 在 Java 中的实现方式。
+
+_Monitor 不管是翻译为“管程”还是“监视器”，都是比较晦涩的，通过翻译后的中文，并无法对 Monitor 达到一个直观的描述。_
+
+#### 临界区
+
+在 Java 中，被`synchronized`关键字修饰的方法、代码块，就是临界区，如下所示：
+
+```java
+private final Object lock = new Object();
+
+public void lockObject() {
+    synchronized (lock) {
+        System.out.println("lockObject");
+    }
+}
+
+public synchronized void lockMethod() {
+    System.out.println("lockMethod");
+}
+
+public void lockClass() {
+    synchronized (SynchronizedTest.class) {
+        System.out.println("lockClass");
+    }
+}
+
+public static synchronized void lockStaticMethod() {
+    System.out.println("lockStaticMethod");
+}
+```
+
+#### Monitor Object
+
+显然，使用`synchronized`关键字的时候，往往需要指定一个对象与之关联，这个对象就被称为 Monitor Object，在 Java 中任何一个 Java 对象都可以作为 Monitor Object。
+因为`java.lang.Object`类定义了`wait()`，`notify()`，`notifyAll()`方法，
+这些方法的具体实现，依赖于一个叫 ObjectMonitor 模式的实现，这是 JVM 内部基于 C++ 实现的一套机制，基本原理如下所示：
+
+![monitor](images/java_jvm_monitor.png)
+
+当一个线程需要获取锁时，会被放入 Entry Set 中进行等待，如果该线程获取到了锁，成为当前锁的 Owner。
+如果根据程序逻辑，一个已经获得了锁的线程缺少某些外部条件，而无法继续进行下去，那么该线程可以通过调用`wait()`方法将锁释放，进入 WaitSet 中阻塞进行等待，
+此时，其它线程就有机会获得锁，去完成其它的事情，从而使得之前不成立的外部条件成立，然后调用`notify()`或`notifyAll()`方法使被阻塞的线程可以重新进入 EntrySet 去竞争锁。
+这个外部条件在 Monitor 机制中称为条件变量。
+
+> Java 提供的 Monitor 机制，是`java.lang.Object`，`synchronized`关键字，条件变量等元素合作组成的。
+> JVM 底层的 ObjectMonitor 是用来辅助实现 Monitor 机制的一种常用模式。所以，把 ObjectMonitor 直接当成了 Monitor 机制是一种错误的说法。
 
 ## 偏向锁 Biased Locking
 
@@ -1540,38 +1565,257 @@ void ObjectSynchronizer::fast_exit(oop object, BasicLock *lock, TRAPS) {
 
 ## 重量级锁 Heavyweight Locking
 
+重量级锁是利用操作系统底层的同步机制实现的线程同步功能。
+如果锁对象处于重量级锁的状态下，那么其对象头的 Mark Word 会指向一个 ObjectMonitor 对象的指针，线程阻塞、等待、唤醒等操作都需要配合它实现，具体请看[Monitor](#Monitor)中的介绍。
+
+### 源码分析
+
+#### 膨胀为重量级锁流程
+
+在[获取轻量级锁流程](#获取轻量级锁流程)和[释放轻量级锁流程](#释放轻量级锁流程)的介绍中，都提到了重量级锁膨胀，这里详细分析膨胀过程。
+
+[/src/share/vm/runtime/synchronizer.cpp#ObjectSynchronizer::inflate](https://github.com/openjdk/jdk8u/blob/2dadc2bf312d5f947e0735d5ec13c285824db31d/hotspot/src/share/vm/runtime/synchronizer.cpp#L1249)
+
+```cpp
+ObjectMonitor *ATTR ObjectSynchronizer::inflate(Thread *Self, oop object, const InflateCause cause) {
+    // Inflate mutates the heap ...
+    // Relaxing assertion for bug 6320749.
+    assert(Universe::verify_in_progress() || !SafepointSynchronize::is_at_safepoint(), "invariant");
+
+    EventJavaMonitorInflate event;
+    // 自旋，直到膨胀为重量级锁
+    for (;;) {
+        const markOop mark = object->mark();
+        assert(!mark->has_bias_pattern(), "invariant");
+
+        // The mark can be in one of the following states:
+        // *  Inflated     - just return
+        // *  Stack-locked - coerce it to inflated
+        // *  INFLATING    - busy wait for conversion to complete
+        // *  Neutral      - aggressively inflate the object.
+        // *  BIASED       - Illegal.  We should never see this
+
+        // 判断当前 Mark Word 处于哪种状态
+        // *  Inflated     - 已膨胀，直接返回
+        // *  Stack-locked - 需要进行膨胀操作
+        // *  INFLATING    - 膨胀中，自旋等待
+        // *  Neutral      - 需要进行膨胀操作
+        // *  BIASED       - 不会出现这种情况
+
+        // CASE: inflated
+        // 如果 Mark Word 已经关联了一个 monitor，说明已经是重量级锁，直接返回
+        if (mark->has_monitor()) {
+            ObjectMonitor *inf = mark->monitor();
+            assert(inf->header()->is_neutral(), "invariant");
+            assert(inf->object() == object, "invariant");
+            assert(ObjectSynchronizer::verify_objmon_isinpool(inf), "monitor is invalid");
+            return inf;
+        }
+
+        // CASE: inflation in progress - inflating over a stack-lock.
+        // Some other thread is converting from stack-locked to inflated.
+        // Only that thread can complete inflation -- other threads must wait.
+        // The INFLATING value is transient.
+        // Currently, we spin/yield/park and poll the markword, waiting for inflation to finish.
+        // We could always eliminate polling by parking the thread on some auxiliary list.
+        // 如果 Mark Word 表示膨胀中，说明存在其他线程正在进行膨胀，自旋等待
+        if (mark == markOopDesc::INFLATING()) {
+            TEVENT(Inflate: spin while INFLATING);
+            ReadStableMark(object);
+            continue;
+        }
+
+        // CASE: stack-locked
+        // Could be stack-locked either by this thread or by some other thread.
+        //
+        // Note that we allocate the objectmonitor speculatively, _before_ attempting
+        // to install INFLATING into the mark word.  We originally installed INFLATING,
+        // allocated the objectmonitor, and then finally STed the address of the
+        // objectmonitor into the mark.  This was correct, but artificially lengthened
+        // the interval in which INFLATED appeared in the mark, thus increasing
+        // the odds of inflation contention.
+        //
+        // We now use per-thread private objectmonitor free lists.
+        // These list are reprovisioned from the global free list outside the
+        // critical INFLATING...ST interval.  A thread can transfer
+        // multiple objectmonitors en-mass from the global free list to its local free list.
+        // This reduces coherency traffic and lock contention on the global free list.
+        // Using such local free lists, it doesn't matter if the omAlloc() call appears
+        // before or after the CAS(INFLATING) operation.
+        // See the comments in omAlloc().
+        // 如果 Mark Word 是有锁状态，说明是轻量级锁，进行膨胀操作
+        if (mark->has_locker()) {
+            // 为 ObjectMonitor 分配内存，并初始化
+            ObjectMonitor *m = omAlloc(Self);
+            // Optimistically prepare the objectmonitor - anticipate successful CAS
+            // We do this before the CAS in order to minimize the length of time
+            // in which INFLATING appears in the mark.
+            m->Recycle();
+            m->_Responsible = NULL;
+            m->OwnerIsThread = 0;
+            m->_recursions = 0;
+            m->_SpinDuration = ObjectMonitor::Knob_SpinLimit;// Consider: maintain by type/class
+            // 通过 CAS 操作修改 Mark Word 为 INFLATING 膨胀中状态
+            markOop cmp = (markOop) Atomic::cmpxchg_ptr(markOopDesc::INFLATING(), object->mark_addr(), mark);
+            // 如果修改失败，则重试
+            if (cmp != mark) {
+                omRelease(Self, m, true);
+                continue;// Interference -- just retry
+            }
+
+            // We've successfully installed INFLATING (0) into the mark-word.
+            // This is the only case where 0 will appear in a mark-work.
+            // Only the singular thread that successfully swings the mark-word
+            // to 0 can perform (or more precisely, complete) inflation.
+            //
+            // Why do we CAS a 0 into the mark-word instead of just CASing the
+            // mark-word from the stack-locked value directly to the new inflated state?
+            // Consider what happens when a thread unlocks a stack-locked object.
+            // It attempts to use CAS to swing the displaced header value from the
+            // on-stack basiclock back into the object header.  Recall also that the
+            // header value (hashcode, etc) can reside in (a) the object header, or
+            // (b) a displaced header associated with the stack-lock, or (c) a displaced
+            // header in an objectMonitor.  The inflate() routine must copy the header
+            // value from the basiclock on the owner's stack to the objectMonitor, all
+            // the while preserving the hashCode stability invariants.  If the owner
+            // decides to release the lock while the value is 0, the unlock will fail
+            // and control will eventually pass from slow_exit() to inflate.  The owner
+            // will then spin, waiting for the 0 value to disappear.   Put another way,
+            // the 0 causes the owner to stall if the owner happens to try to
+            // drop the lock (restoring the header from the basiclock to the object)
+            // while inflation is in-progress.  This protocol avoids races that might
+            // would otherwise permit hashCode values to change or "flicker" for an object.
+            // Critically, while object->mark is 0 mark->displaced_mark_helper() is stable.
+            // 0 serves as a "BUSY" inflate-in-progress indicator.
+
+
+            // fetch the displaced mark from the owner's stack.
+            // The owner can't die or unwind past the lock while our INFLATING
+            // object is in the mark.  Furthermore the owner can't complete
+            // an unlock on the object, either.
+            // 从持有轻量级锁线程的栈中获取 Displaced Mark Word，即原 Mark Word
+            markOop dmw = mark->displaced_mark_helper();
+            assert(dmw->is_neutral(), "invariant");
+
+            // Setup monitor fields to proper values -- prepare the monitor
+            // 将 Displaced Mark Word 存到 monitor 中
+            m->set_header(dmw);
+
+            // Optimization: if the mark->locker stack address is associated
+            // with this thread we could simply set m->_owner = Self and
+            // m->OwnerIsThread = 1. Note that a thread can inflate an object
+            // that it has stack-locked -- as might happen in wait() -- directly
+            // with CAS.  That is, we can avoid the xchg-NULL .... ST idiom.
+            // 设置 owner 为栈的地址
+            m->set_owner(mark->locker());
+            // 设置锁对象
+            m->set_object(object);
+            // TODO-FIXME: assert BasicLock->dhw != 0.
+
+            // Must preserve store ordering. The monitor state must
+            // be stable at the time of publishing the monitor address.
+            guarantee(object->mark() == markOopDesc::INFLATING(), "invariant");
+            // 将锁对象的 Mark Word 设置为重量级锁状态
+            object->release_set_mark(markOopDesc::encode(m));
+
+            // Hopefully the performance counters are allocated on distinct cache lines
+            // to avoid false sharing on MP systems ...
+            if (ObjectMonitor::_sync_Inflations != NULL) ObjectMonitor::_sync_Inflations->inc();
+            TEVENT(Inflate: overwrite stacklock);
+            if (TraceMonitorInflation) {
+                if (object->is_instance()) {
+                    ResourceMark rm;
+                    tty->print_cr("Inflating object " INTPTR_FORMAT " , mark " INTPTR_FORMAT " , type %s",
+                                  (void *) object, (intptr_t) object->mark(),
+                                  object->klass()->external_name());
+                }
+            }
+            if (event.should_commit()) {
+                post_monitor_inflate_event(&event, object, cause);
+            }
+            return m;
+        }
+
+        // CASE: neutral
+        // TODO-FIXME: for entry we currently inflate and then try to CAS _owner.
+        // If we know we're inflating for entry it's better to inflate by swinging a
+        // pre-locked objectMonitor pointer into the object header.   A successful
+        // CAS inflates the object *and* confers ownership to the inflating thread.
+        // In the current implementation we use a 2-step mechanism where we CAS()
+        // to inflate and then CAS() again to try to swing _owner from NULL to Self.
+        // An inflateTry() method that we could call from fast_enter() and slow_enter()
+        // would be useful.
+        // 当前是无锁状态
+        assert(mark->is_neutral(), "invariant");
+        // 为 ObjectMonitor 分配内存，并初始化
+        ObjectMonitor *m = omAlloc(Self);
+        // prepare m for installation - set monitor to initial state
+        m->Recycle();
+        m->set_header(mark);
+        m->set_owner(NULL); // 设置 owner 为 NULL，表示当前线程持有锁
+        m->set_object(object);
+        m->OwnerIsThread = 1;
+        m->_recursions = 0;
+        m->_Responsible = NULL;
+        m->_SpinDuration = ObjectMonitor::Knob_SpinLimit;// consider: keep metastats by type/class
+        // 通过 CAS 操作设置 Mark Word 为重量级锁状态
+        if (Atomic::cmpxchg_ptr(markOopDesc::encode(m), object->mark_addr(), mark) != mark) {
+            // 如果失败，则说明存在其他线程正在膨胀，释放 monitor 对象
+            m->set_object(NULL);
+            m->set_owner(NULL);
+            m->OwnerIsThread = 0;
+            m->Recycle();
+            omRelease(Self, m, true);
+            m = NULL;
+            continue;
+            // interference - the markword changed - just retry.
+            // The state-transitions are one-way, so there's no chance of
+            // live-lock -- "Inflated" is an absorbing state.
+        }
+
+        // Hopefully the performance counters are allocated on distinct
+        // cache lines to avoid false sharing on MP systems ...
+        if (ObjectMonitor::_sync_Inflations != NULL) ObjectMonitor::_sync_Inflations->inc();
+        TEVENT(Inflate: overwrite neutral);
+        if (TraceMonitorInflation) {
+            if (object->is_instance()) {
+                ResourceMark rm;
+                tty->print_cr("Inflating object " INTPTR_FORMAT " , mark " INTPTR_FORMAT " , type %s",
+                              (void *) object, (intptr_t) object->mark(),
+                              object->klass()->external_name());
+            }
+        }
+        if (event.should_commit()) {
+            post_monitor_inflate_event(&event, object, cause);
+        }
+        return m;
+    }
+}
+```
+
+> 为什么要通过 CAS 操作将 INFLATING(0) 写到 Mark Word 中，而不是直接将 Mark Word 从轻量级锁状态更新为重量级状态？
+> 1. 防止轻量级锁在膨胀过程中解锁，使其解锁失败，进入`slow_exit()`流程
+> 2. 保持`hashCode`稳定，这也就是为什么在轻量级锁中调用`java.lang.Object.hashCode()`或`java.lang.System.identityHashCode(Object)`方法会膨胀为重量级锁
+> 3. 最重要的是，虽然锁对象的 Mark Word 为 0，但 Lock Record 中的 Displaced Mark Word 是稳定的
+
+#### 获取重量级锁流程
+
 TODO
 
-## synchronized 锁粗化
+#### 释放重量级锁流程
 
-将多个连续的加锁、解锁操作连接在一起，扩展成一个范围更大的锁，避免频繁的加锁解锁操作。
+TODO
 
-例如在循环中使用`synchronized`：
+#### 重量级锁降级流程
 
-```java
-for (int i = 0; i < 1000; i++) {
-    synchronized (this) {
-        i++;
-    }
-}
-```
+TODO
 
-优化后将锁的粒度粗化（近似代码）：
+## 锁消除 Lock Elimination
 
-```java
-synchronized (this) {
-    for (int i = 0; i < 1000; i++) {
-        i++;
-    }
-}
-```
-
-## synchronized 锁消除
-
-虚拟机在 JIT 编译时，通过对运行上下文的扫描，经过逃逸分析发现一个对象被加了锁，但是只会被一个线程被访问到，会移除不可能存在共享资源竞争的锁，
+虚拟机在 JIT 编译时，通过对运行上下文的扫描，经过逃逸分析确认某个加锁的对象只会被一个线程访问，就会移除不可能存在共享资源竞争的锁，
 通过这种方式消除没有必要的锁，可以节省毫无意义的时间消耗。
 
-被加锁的对象只有当前方法中使用：
+例如，被加锁的对象只有当前方法中使用：
 
 ```java
 synchronized (new Object()) {
@@ -1579,7 +1823,58 @@ synchronized (new Object()) {
 }
 ```
 
-## 悲观锁与乐观锁
+锁消除默认是开启的，可以通过`-XX:-EliminateLocks`禁用。
+
+## 锁粗化 Lock Coarsening
+
+HotSpot 还有一些额外的锁优化的技术，虽然从技术上讲它们并不属于逃逸分析子系统中的一部分，但也是通过分析作用域来提高内部锁的性能。
+当连续获取同一个对象的锁时，HotSpot 会去检查多个锁区域是否能合并成一个更大的锁区域，这种聚合被称作锁粗化，它能够减少加锁和解锁的消耗。
+
+例如：
+
+```java
+synchronized (lock) {
+    // statements 1
+}
+synchronized (lock) {
+    // statements 2
+}
+```
+
+转化为：
+
+```java
+synchronized (lock) {
+    // statements 1
+    // statements 2
+}
+```
+
+在循环中使用`synchronized`：
+
+```java
+for (...) {
+    synchronized (lock) {
+        // ...
+    }
+}
+```
+
+优化后将锁的粒度粗化（近似代码）：
+
+```java
+synchronized (lock) {
+    for (...){
+        // ...
+    }
+}
+```
+
+实际上，粗化不适用于整个循环，是基于循环展开，因为循环展开后的代码可以看作是多个个连续的加锁代码块。
+
+## 补充 <!-- {docsify-ignore} -->
+
+### 悲观锁与乐观锁
 
 悲观锁与乐观锁并不是特指某个锁，而是在并发情况下的两种不同策略。
 

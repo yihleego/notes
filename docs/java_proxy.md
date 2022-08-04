@@ -1,6 +1,8 @@
-# 动态代理
+# Proxy
 
-## JDK 动态代理
+## 动态代理
+
+### JDK 动态代理
 
 JDK 动态代理是通过拦截器和反射生成的匿名类实现的，所以至少需要实现一个接口。
 
@@ -27,7 +29,7 @@ public static void main(String[] args) {
 }
 ```
 
-## CGLIB 动态代理
+### CGLIB 动态代理
 
 CGLIB 动态代理是通过继承和修改字节码实现的，所以父类不能为`final`，否则会报错`java.lang.IllegalArgumentException: Cannot subclass final class`。
 

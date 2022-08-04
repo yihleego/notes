@@ -278,26 +278,94 @@ Constant pool:
 
 引入的目的是为了在无锁竞争或少竞争的情况下，避免使用重量级锁。因为重量级锁依赖于系统级别的同步函数，在 Linux 中使用`mutex`互斥锁，底层实现依赖于`futex`，这些同步函数都涉及到用户态和内核态的切换、进程的上下文切换，会带来一定的性能开销。
 
-### Mark Word
+### Object Header
 
-在 Java 中任意对象都可以当作锁，因此需要维护一个对象和锁的映射关系，比如，当前哪个线程持有锁，哪些线程在等待。
-Java 选择将这个映射关系存储在对象头中，其中还包括了 HashCode、GC 相关的信息，该区域被称为 Mark Word。
+在 Java 中任意对象都可以当作锁，因此需要维护一个对象和锁状态的映射关系，比如，当前哪个线程持有锁，哪些线程在等待。
+这个映射关系被存储在对象头中，该区域被称为 Mark Word。对象头中除了 Mark Word，还有 Klass Word，用于储存指向该对象所属类的指针。
+如果对象是一个数组，那么对象头需要额外的空间来存储数组的长度，这个数据的长度也随着虚拟机架构的不同而调整。
 
-对象头中除了 Mark Word，还有储存了指向该对象所属类对象的指针。对于数组，还会储存记录数组长度的信息。
+32 位虚拟机中的对象头结构：
 
-为了能在有限的空间里存储下更多的数据，其存储格式不固定。
+```
+|----------------------------------------------------------------------------------------|--------------------|
+|                                    Object Header (64 bits)                             |        State       |
+|-------------------------------------------------------|--------------------------------|--------------------|
+|                  Mark Word (32 bits)                  |      Klass Word (32 bits)      |                    |
+|-------------------------------------------------------|--------------------------------|--------------------|
+| identity_hashcode:25 | age:4 | biased_lock:1 | lock:2 |      OOP to metadata object    |       Normal       |
+|-------------------------------------------------------|--------------------------------|--------------------|
+|  thread:23 | epoch:2 | age:4 | biased_lock:1 | lock:2 |      OOP to metadata object    |       Biased       |
+|-------------------------------------------------------|--------------------------------|--------------------|
+|               ptr_to_lock_record:30          | lock:2 |      OOP to metadata object    | Lightweight Locked |
+|-------------------------------------------------------|--------------------------------|--------------------|
+|               ptr_to_heavyweight_monitor:30  | lock:2 |      OOP to metadata object    | Heavyweight Locked |
+|-------------------------------------------------------|--------------------------------|--------------------|
+|                                              | lock:2 |      OOP to metadata object    |    Marked for GC   |
+|-------------------------------------------------------|--------------------------------|--------------------|
+```
 
-32 位虚拟机中对象头的 Mark Word 结构：
+64 位虚拟机中的对象头结构：
 
-![markword_32](images/java_jvm_markword_32.png)
+```
+|------------------------------------------------------------------------------------------------------------|--------------------|
+|                                            Object Header (128 bits)                                        |        State       |
+|------------------------------------------------------------------------------|-----------------------------|--------------------|
+|                                  Mark Word (64 bits)                         |    Klass Word (64 bits)     |                    |
+|------------------------------------------------------------------------------|-----------------------------|--------------------|
+| unused:25 | identity_hashcode:31 | unused:1 | age:4 | biased_lock:1 | lock:2 |    OOP to metadata object   |       Normal       |
+|------------------------------------------------------------------------------|-----------------------------|--------------------|
+| thread:54 |       epoch:2        | unused:1 | age:4 | biased_lock:1 | lock:2 |    OOP to metadata object   |       Biased       |
+|------------------------------------------------------------------------------|-----------------------------|--------------------|
+|                        ptr_to_lock_record:62                        | lock:2 |    OOP to metadata object   | Lightweight Locked |
+|------------------------------------------------------------------------------|-----------------------------|--------------------|
+|                        ptr_to_heavyweight_monitor:62                | lock:2 |    OOP to metadata object   | Heavyweight Locked |
+|------------------------------------------------------------------------------|-----------------------------|--------------------|
+|                                                                     | lock:2 |    OOP to metadata object   |    Marked for GC   |
+|------------------------------------------------------------------------------|-----------------------------|--------------------|
+```
 
-64 位虚拟机中对象头的 Mark Word 结构：
+64 位虚拟机中启用指针压缩的对象头结构：
 
-![markword_64](images/java_jvm_markword_64.png)
+```
+|--------------------------------------------------------------------------------------------------------------|--------------------|
+|                                            Object Header (96 bits)                                           |        State       |
+|--------------------------------------------------------------------------------|-----------------------------|--------------------|
+|                                  Mark Word (64 bits)                           |    Klass Word (32 bits)     |                    |
+|--------------------------------------------------------------------------------|-----------------------------|--------------------|
+| unused:25 | identity_hashcode:31 | cms_free:1 | age:4 | biased_lock:1 | lock:2 |    OOP to metadata object   |       Normal       |
+|--------------------------------------------------------------------------------|-----------------------------|--------------------|
+| thread:54 |       epoch:2        | cms_free:1 | age:4 | biased_lock:1 | lock:2 |    OOP to metadata object   |       Biased       |
+|--------------------------------------------------------------------------------|-----------------------------|--------------------|
+|                         ptr_to_lock_record                            | lock:2 |    OOP to metadata object   | Lightweight Locked |
+|--------------------------------------------------------------------------------|-----------------------------|--------------------|
+|                     ptr_to_heavyweight_monitor                        | lock:2 |    OOP to metadata object   | Heavyweight Locked |
+|--------------------------------------------------------------------------------|-----------------------------|--------------------|
+|                                                                       | lock:2 |    OOP to metadata object   |    Marked for GC   |
+|--------------------------------------------------------------------------------|-----------------------------|--------------------|
+```
 
-- 偏向锁：Mark Word 储存了偏向的线程ID，偏向锁标识为`1`，锁标识为`01`。
-- 轻量级锁：Mark Word 储存了指向线程栈帧中 Lock Record 的指针，偏向锁标识为`0`，锁标识为`00`。
-- 重量级锁：Mark Word 储存了指向堆中的 Monitor 对象的指针，偏向锁标识为`0`，锁标识为`10`。
+32 位虚拟机中的数组对象头结构：
+
+```
+|---------------------------------------------------------------------|
+|                     Object Header (96 bits)                         |
+|---------------------|----------------------|------------------------|
+| Mark Word (32 bits) | Klass Word (32 bits) | Array Length (32 bits) |
+|---------------------|----------------------|------------------------|
+```
+
+64 位虚拟机中的数组对象头结构：
+
+```
+|---------------------------------------------------------------------|
+|                     Object Header (128 bits)                        |
+|---------------------|----------------------|------------------------|
+| Mark Word (64 bits) | Klass Word (32 bits) | Array Length (32 bits) |
+|---------------------|----------------------|------------------------|
+```
+
+可以通过`-XX:+UseCompressedOops`参数启用压缩指针，从 OpenJDK 6u25 开始默认启用。
+可以通过`-XX:+UseCompressedOops`参数禁用压缩指针。
 
 ### SafePoint
 
@@ -1434,7 +1502,7 @@ void ObjectSynchronizer::slow_enter(Handle obj, BasicLock *lock, TRAPS) {
     // so it does not matter what the value is, except that it
     // must be non-zero to avoid looking like a re-entrant lock,
     // and must not look locked either.
-    // 调用 inflate 方法膨胀为重量级锁
+    // 调用 ObjectSynchronizer::inflate 方法膨胀为重量级锁，膨胀完成后，会调用 ObjectMonitor::enter 方法获取锁
     lock->set_displaced_header(markOopDesc::unused_mark());
     ObjectSynchronizer::inflate(THREAD, obj(), inflate_cause_monitor_enter)->enter(THREAD);
 }
@@ -1800,7 +1868,455 @@ ObjectMonitor *ATTR ObjectSynchronizer::inflate(Thread *Self, oop object, const 
 
 #### 获取重量级锁流程
 
-TODO
+[/src/share/vm/interpreter/objectMonitor.cpp#ObjectMonitor::enter](https://github.com/openjdk/jdk8u/blob/2dadc2bf312d5f947e0735d5ec13c285824db31d/hotspot/src/share/vm/runtime/objectMonitor.cpp#L321)
+
+```cpp
+void ATTR ObjectMonitor::enter(TRAPS) {
+    // The following code is ordered to check the most common cases first
+    // and to reduce RTS->RTO cache line upgrades on SPARC and IA32 processors.
+    Thread *const Self = THREAD;
+    void *cur;
+    // 通过 CAS 操作将 owner 设置为当前线程，如果修改成功，表示已经获取到重量级锁了，直接返回
+    // 注意，这里 owner 预期原值是 NULL，也就是无锁状态
+    cur = Atomic::cmpxchg_ptr(Self, &_owner, NULL);
+    if (cur == NULL) {
+        // Either ASSERT _recursions == 0 or explicitly set _recursions = 0.
+        assert(_recursions == 0, "invariant");
+        assert(_owner == Self, "invariant");
+        // CONSIDER: set or assert OwnerIsThread == 1
+        return;
+    }
+    // 如果是锁重入，重入次数加 1，直接返回
+    if (cur == Self) {
+        // TODO-FIXME: check for integer overflow!  BUGID 6557169.
+        _recursions++;
+        return;
+    }
+    // 如果当前线程是之前持有轻量级锁的线程，此时，cur 是指向 Lock Record 的指针
+    // 注意，轻量级锁膨胀为重量级锁，第一次调用 ObjectMonitor::enter 会进入这个分支
+    if (Self->is_lock_owned((address) cur)) {
+        assert(_recursions == 0, "internal state error");
+        // 重置重入次数
+        _recursions = 1;
+        // Commute owner from a thread-specific on-stack BasicLockObject address to
+        // a full-fledged "Thread *".
+        // 设置 owner 为当前线程
+        _owner = Self;
+        OwnerIsThread = 1;
+        return;
+    }
+
+    // We've encountered genuine contention.
+    assert(Self->_Stalled == 0, "invariant");
+    Self->_Stalled = intptr_t(this);
+
+    // Try one round of spinning *before* enqueueing Self
+    // and before going through the awkward and expensive state
+    // transitions.  The following spin is strictly optional ...
+    // Note that if we acquire the monitor from an initial spin
+    // we forgo posting JVMTI events and firing DTRACE probes.
+    // 当代码执行到这里时，说明存在竞争导致获取锁失败，尝试自旋获取锁，尽量避免阻塞线程
+    if (Knob_SpinEarly && TrySpin(Self) > 0) {
+        // 进入这个分支，说明自旋的过程中，当前成功获取了锁，直接返回
+        assert(_owner == Self, "invariant");
+        assert(_recursions == 0, "invariant");
+        assert(((oop)(object()))->mark() == markOopDesc::encode(this), "invariant");
+        Self->_Stalled = 0;
+        return;
+    }
+
+    assert(_owner != Self, "invariant");
+    assert(_succ != Self, "invariant");
+    assert(Self->is_Java_thread(), "invariant");
+    JavaThread *jt = (JavaThread *) Self;
+    assert(!SafepointSynchronize::is_at_safepoint(), "invariant");
+    assert(jt->thread_state() != _thread_blocked, "invariant");
+    assert(this->object() != NULL, "invariant");
+    assert(_count >= 0, "invariant");
+
+    // Prevent deflation at STW-time.  See deflate_idle_monitors() and is_busy().
+    // Ensure the object-monitor relationship remains stable while there's contention.
+    Atomic::inc_ptr(&_count);
+
+    JFR_ONLY(JfrConditionalFlushWithStacktrace < EventJavaMonitorEnter > flush(jt);)
+    EventJavaMonitorEnter event;
+    if (event.should_commit()) {
+        event.set_monitorClass(((oop)
+        this->object())->klass());
+        event.set_address((uintptr_t)(this->object_addr()));
+    }
+
+    { // Change java thread status to indicate blocked on monitor enter.
+        JavaThreadBlockedOnMonitorEnterState jtbmes(jt, this);
+
+        Self->set_current_pending_monitor(this);
+
+        DTRACE_MONITOR_PROBE(contended__enter, this, object(), jt);
+        if (JvmtiExport::should_post_monitor_contended_enter()) {
+            JvmtiExport::post_monitor_contended_enter(jt, this);
+
+            // The current thread does not yet own the monitor and does not
+            // yet appear on any queues that would get it made the successor.
+            // This means that the JVMTI_EVENT_MONITOR_CONTENDED_ENTER event
+            // handler cannot accidentally consume an unpark() meant for the
+            // ParkEvent associated with this ObjectMonitor.
+        }
+
+        OSThreadContendState osts(Self->osthread());
+        ThreadBlockInVM tbivm(jt);
+
+        // TODO-FIXME: change the following for(;;) loop to straight-line code.
+        // 这里有个 TODO 想要把循环去掉，是因为自旋太多了吗？不清楚
+        for (;;) {
+            jt->set_suspend_equivalent();
+            // cleared by handle_special_suspend_equivalent_condition()
+            // or java_suspend_self()
+            // 进入 ObjectMonitor::EnterI 方法，调用系统同步函数
+            EnterI(THREAD);
+
+            if (!ExitSuspendEquivalent(jt)) break;
+
+            //
+            // We have acquired the contended monitor, but while we were
+            // waiting another thread suspended us. We don't want to enter
+            // the monitor while suspended because that would surprise the
+            // thread that suspended us.
+            //
+            _recursions = 0;
+            _succ = NULL;
+            exit(false, Self);
+
+            jt->java_suspend_self();
+        }
+        Self->set_current_pending_monitor(NULL);
+
+        // We cleared the pending monitor info since we've just gotten past
+        // the enter-check-for-suspend dance and we now own the monitor free
+        // and clear, i.e., it is no longer pending. The ThreadBlockInVM
+        // destructor can go to a safepoint at the end of this block. If we
+        // do a thread dump during that safepoint, then this thread will show
+        // as having "-locked" the monitor, but the OS and java.lang.Thread
+        // states will still report that the thread is blocked trying to
+        // acquire it.
+    }
+
+    Atomic::dec_ptr(&_count);
+    assert(_count >= 0, "invariant");
+    Self->_Stalled = 0;
+
+    // Must either set _recursions = 0 or ASSERT _recursions == 0.
+    assert(_recursions == 0, "invariant");
+    assert(_owner == Self, "invariant");
+    assert(_succ != Self, "invariant");
+    assert(((oop)(object()))->mark() == markOopDesc::encode(this), "invariant");
+
+    // The thread -- now the owner -- is back in vm mode.
+    // Report the glorious news via TI,DTrace and jvmstat.
+    // The probe effect is non-trivial.  All the reportage occurs
+    // while we hold the monitor, increasing the length of the critical
+    // section.  Amdahl's parallel speedup law comes vividly into play.
+    //
+    // Another option might be to aggregate the events (thread local or
+    // per-monitor aggregation) and defer reporting until a more opportune
+    // time -- such as next time some thread encounters contention but has
+    // yet to acquire the lock.  While spinning that thread could
+    // spinning we could increment JVMStat counters, etc.
+
+    DTRACE_MONITOR_PROBE(contended__entered, this, object(), jt);
+    if (JvmtiExport::should_post_monitor_contended_entered()) {
+        JvmtiExport::post_monitor_contended_entered(jt, this);
+
+        // The current thread already owns the monitor and is not going to
+        // call park() for the remainder of the monitor enter protocol. So
+        // it doesn't matter if the JVMTI_EVENT_MONITOR_CONTENDED_ENTERED
+        // event handler consumed an unpark() issued by the thread that
+        // just exited the monitor.
+    }
+
+    if (event.should_commit()) {
+        event.set_previousOwner((uintptr_t) _previous_owner_tid);
+        event.commit();
+    }
+
+    if (ObjectMonitor::_sync_ContendedLockAttempts != NULL) {
+        ObjectMonitor::_sync_ContendedLockAttempts->inc();
+    }
+}
+```
+
+介绍`ObjectMonitor::EnterI`方法之前，先了解一下`ObjectMonitor`的三大队列：`cxq`、`EntryList`和`WaitSet`，其中`EntryList`是双向链表。
+阻塞的线程会进入`cxq`和`EntryList`队列，调用了`wait()`方法睡眠的线程会进入`WaitSet`队列。
+
+##### 为什么`ObjectMonitor`需要`cxq`和`EntryList`两个等待队列？
+
+使用`ObjectMonitor`同步操作会对等待队列的进出队操作。如果只使用一个队列冲突的概率会加大。分成两个队列后，只有加锁的情况才会操作 EntryList 队列，不需要 CAS 和自旋，减少了资源消耗。
+
+##### `cxq`队列中等待的线程什么时候会进入`EntryList`队列
+
+获取锁失败的线程，默认会进`cxq`队列，当持有锁的线程释放锁时，会将`cxq`队列中等待的线程放入`EntryList`队列中。
+
+##### 等待队列中多个线程，唤醒的顺序是什么
+
+当持有锁的线程释放锁时，会先检查`EntryList`队列是否为空，如果不为空，则唤醒`EntryList`队列中第一个节点。否则，会去唤醒`cxq`队列中第一个节点。
+
+##### 偏向锁和轻量级锁是否可以调用`wait()`和`notify()`方法
+
+可以，当前锁的状态是偏向锁或轻量级锁，会先膨胀成重量级锁
+
+[/src/share/vm/interpreter/objectMonitor.cpp#ObjectMonitor::EnterI](https://github.com/openjdk/jdk8u/blob/2dadc2bf312d5f947e0735d5ec13c285824db31d/hotspot/src/share/vm/runtime/objectMonitor.cpp#L508)
+
+```cpp
+void ATTR ObjectMonitor::EnterI(TRAPS) {
+    Thread *Self = THREAD;
+    assert(Self->is_Java_thread(), "invariant");
+    assert(((JavaThread *) Self)->thread_state() == _thread_blocked, "invariant");
+
+    // Try the lock - TATAS
+    // 再次尝试获取锁
+    if (TryLock(Self) > 0) {
+        assert(_succ != Self, "invariant");
+        assert(_owner == Self, "invariant");
+        assert(_Responsible != Self, "invariant");
+        return;
+    }
+
+    DeferredInitialize();
+
+    // We try one round of spinning *before* enqueueing Self.
+    //
+    // If the _owner is ready but OFFPROC we could use a YieldTo()
+    // operation to donate the remainder of this thread's quantum
+    // to the owner.  This has subtle but beneficial affinity
+    // effects.
+    // 再次尝试自旋获取锁
+    if (TrySpin(Self) > 0) {
+        assert(_owner == Self, "invariant");
+        assert(_succ != Self, "invariant");
+        assert(_Responsible != Self, "invariant");
+        return;
+    }
+
+    // The Spin failed -- Enqueue and park the thread ...
+    assert(_succ != Self, "invariant");
+    assert(_owner != Self, "invariant");
+    assert(_Responsible != Self, "invariant");
+
+    // Enqueue "Self" on ObjectMonitor's _cxq.
+    //
+    // Node acts as a proxy for Self.
+    // As an aside, if were to ever rewrite the synchronization code mostly
+    // in Java, WaitNodes, ObjectMonitors, and Events would become 1st-class
+    // Java objects.  This would avoid awkward lifecycle and liveness issues,
+    // as well as eliminate a subset of ABA issues.
+    // TODO: eliminate ObjectWaiter and enqueue either Threads or Events.
+    //
+    // 将线程封装成 ObjectWaiter 节点
+    ObjectWaiter node(Self);
+    Self->_ParkEvent->reset();
+    node._prev = (ObjectWaiter *) 0xBAD;
+    node.TState = ObjectWaiter::TS_CXQ;
+
+    // Push "Self" onto the front of the _cxq.
+    // Once on cxq/EntryList, Self stays on-queue until it acquires the lock.
+    // Note that spinning tends to reduce the rate at which threads
+    // enqueue and dequeue on EntryList|cxq.
+    // 将线程（节点）放到 cxq 队列首位
+    ObjectWaiter *nxt;
+    for (;;) {
+        node._next = nxt = _cxq;
+        // 通过 CAS 操作将更新节点
+        if (Atomic::cmpxchg_ptr(&node, &_cxq, nxt) == nxt) break;
+
+        // Interference - the CAS failed because _cxq changed.  Just retry.
+        // As an optional optimization we retry the lock.
+        // 如果更新失败，说明 cxq 发生了变化，再次尝试获取锁，如果没有获取锁，再次尝试更新 cxq 队列节点
+        if (TryLock(Self) > 0) {
+            assert(_succ != Self, "invariant");
+            assert(_owner == Self, "invariant");
+            assert(_Responsible != Self, "invariant");
+            return;
+        }
+    }
+
+    // Check for cxq|EntryList edge transition to non-null.  This indicates
+    // the onset of contention.  While contention persists exiting threads
+    // will use a ST:MEMBAR:LD 1-1 exit protocol.  When contention abates exit
+    // operations revert to the faster 1-0 mode.  This enter operation may interleave
+    // (race) a concurrent 1-0 exit operation, resulting in stranding, so we
+    // arrange for one of the contending thread to use a timed park() operations
+    // to detect and recover from the race.  (Stranding is form of progress failure
+    // where the monitor is unlocked but all the contending threads remain parked).
+    // That is, at least one of the contended threads will periodically poll _owner.
+    // One of the contending threads will become the designated "Responsible" thread.
+    // The Responsible thread uses a timed park instead of a normal indefinite park
+    // operation -- it periodically wakes and checks for and recovers from potential
+    // strandings admitted by 1-0 exit operations.   We need at most one Responsible
+    // thread per-monitor at any given moment.  Only threads on cxq|EntryList may
+    // be responsible for a monitor.
+    //
+    // Currently, one of the contended threads takes on the added role of "Responsible".
+    // A viable alternative would be to use a dedicated "stranding checker" thread
+    // that periodically iterated over all the threads (or active monitors) and unparked
+    // successors where there was risk of stranding.  This would help eliminate the
+    // timer scalability issues we see on some platforms as we'd only have one thread
+    // -- the checker -- parked on a timer.
+    // SyncFlags 默认为 0，如果没有其他等待的线程，则将 _Responsible 设置为当前线程
+    if ((SyncFlags & 16) == 0 && nxt == NULL && _EntryList == NULL) {
+        // Try to assume the role of responsible thread for the monitor.
+        // CONSIDER:  ST vs CAS vs { if (Responsible==null) Responsible=Self }
+        Atomic::cmpxchg_ptr(Self, &_Responsible, NULL);
+    }
+
+    // The lock have been released while this thread was occupied queueing
+    // itself onto _cxq.  To close the race and avoid "stranding" and
+    // progress-liveness failure we must resample-retry _owner before parking.
+    // Note the Dekker/Lamport duality: ST cxq; MEMBAR; LD Owner.
+    // In this case the ST-MEMBAR is accomplished with CAS().
+    //
+    // TODO: Defer all thread state transitions until park-time.
+    // Since state transitions are heavy and inefficient we'd like
+    // to defer the state transitions until absolutely necessary,
+    // and in doing so avoid some transitions ...
+
+    TEVENT(Inflated
+    enter - Contention);
+    int nWakeups = 0;
+    int RecheckInterval = 1;
+
+    for (;;) {
+
+        if (TryLock(Self) > 0) break;
+        assert(_owner != Self, "invariant");
+
+        if ((SyncFlags & 2) && _Responsible == NULL) {
+            Atomic::cmpxchg_ptr(Self, &_Responsible, NULL);
+        }
+
+        // park self
+        if (_Responsible == Self || (SyncFlags & 1)) {
+            // 如果 Responsible 是当前线程，调用 park 并指定超时时间
+            TEVENT(Inflated enter - park TIMED);
+            Self->_ParkEvent->park((jlong) RecheckInterval);
+            // Increase the RecheckInterval, but clamp the value.
+            RecheckInterval *= 8;
+            if (RecheckInterval > 1000) RecheckInterval = 1000;
+        } else {
+            // 如果不是，直接调用 park 挂起当前线程
+            TEVENT(Inflated enter - park UNTIMED);
+            Self->_ParkEvent->park();
+        }
+
+        if (TryLock(Self) > 0) break;
+
+        // The lock is still contested.
+        // Keep a tally of the # of futile wakeups.
+        // Note that the counter is not protected by a lock or updated by atomics.
+        // That is by design - we trade "lossy" counters which are exposed to
+        // races during updates for a lower probe effect.
+        TEVENT(Inflated enter - Futile wakeup);
+        if (ObjectMonitor::_sync_FutileWakeups != NULL) {
+            ObjectMonitor::_sync_FutileWakeups->inc();
+        }
+        ++nWakeups;
+
+        // Assuming this is not a spurious wakeup we'll normally find _succ == Self.
+        // We can defer clearing _succ until after the spin completes
+        // TrySpin() must tolerate being called with _succ == Self.
+        // Try yet another round of adaptive spinning.
+        if ((Knob_SpinAfterFutile & 1) && TrySpin(Self) > 0) break;
+
+        // We can find that we were unpark()ed and redesignated _succ while
+        // we were spinning.  That's harmless.  If we iterate and call park(),
+        // park() will consume the event and return immediately and we'll
+        // just spin again.  This pattern can repeat, leaving _succ to simply
+        // spin on a CPU.  Enable Knob_ResetEvent to clear pending unparks().
+        // Alternately, we can sample fired() here, and if set, forgo spinning
+        // in the next iteration.
+
+        if ((Knob_ResetEvent & 1) && Self->_ParkEvent->fired()) {
+            Self->_ParkEvent->reset();
+            OrderAccess::fence();
+        }
+        // 在释放锁时，_succ 会被设置为 EntryList 或 cxq 中的一个线程，所以这里需要清除
+        if (_succ == Self) _succ = NULL;
+
+        // Invariant: after clearing _succ a thread *must* retry _owner before parking.
+        OrderAccess::fence();
+    }
+
+    // 代码执行到这里，说明当前成功获取锁了
+
+    // Egress :
+    // Self has acquired the lock -- Unlink Self from the cxq or EntryList.
+    // Normally we'll find Self on the EntryList .
+    // From the perspective of the lock owner (this thread), the
+    // EntryList is stable and cxq is prepend-only.
+    // The head of cxq is volatile but the interior is stable.
+    // In addition, Self.TState is stable.
+
+    assert(_owner == Self, "invariant");
+    assert(object() != NULL, "invariant");
+    // I'd like to write:
+    //   guarantee (((oop)(object()))->mark() == markOopDesc::encode(this), "invariant") ;
+    // but as we're at a safepoint that's not safe.
+    // 将当前线程的节点从 cxq 或 EntryList 中移除
+    UnlinkAfterAcquire(Self, &node);
+    if (_succ == Self) _succ = NULL;
+
+    assert(_succ != Self, "invariant");
+    if (_Responsible == Self) {
+        _Responsible = NULL;
+        OrderAccess::fence(); // Dekker pivot-point
+
+        // We may leave threads on cxq|EntryList without a designated
+        // "Responsible" thread.  This is benign.  When this thread subsequently
+        // exits the monitor it can "see" such preexisting "old" threads --
+        // threads that arrived on the cxq|EntryList before the fence, above --
+        // by LDing cxq|EntryList.  Newly arrived threads -- that is, threads
+        // that arrive on cxq after the ST:MEMBAR, above -- will set Responsible
+        // non-null and elect a new "Responsible" timer thread.
+        //
+        // This thread executes:
+        //    ST Responsible=null; MEMBAR    (in enter epilog - here)
+        //    LD cxq|EntryList               (in subsequent exit)
+        //
+        // Entering threads in the slow/contended path execute:
+        //    ST cxq=nonnull; MEMBAR; LD Responsible (in enter prolog)
+        //    The (ST cxq; MEMBAR) is accomplished with CAS().
+        //
+        // The MEMBAR, above, prevents the LD of cxq|EntryList in the subsequent
+        // exit operation from floating above the ST Responsible=null.
+    }
+
+    // We've acquired ownership with CAS().
+    // CAS is serializing -- it has MEMBAR/FENCE-equivalent semantics.
+    // But since the CAS() this thread may have also stored into _succ,
+    // EntryList, cxq or Responsible.  These meta-data updates must be
+    // visible __before this thread subsequently drops the lock.
+    // Consider what could occur if we didn't enforce this constraint --
+    // STs to monitor meta-data and user-data could reorder with (become
+    // visible after) the ST in exit that drops ownership of the lock.
+    // Some other thread could then acquire the lock, but observe inconsistent
+    // or old monitor meta-data and heap data.  That violates the JMM.
+    // To that end, the 1-0 exit() operation must have at least STST|LDST
+    // "release" barrier semantics.  Specifically, there must be at least a
+    // STST|LDST barrier in exit() before the ST of null into _owner that drops
+    // the lock.   The barrier ensures that changes to monitor meta-data and data
+    // protected by the lock will be visible before we release the lock, and
+    // therefore before some other thread (CPU) has a chance to acquire the lock.
+    // See also: http://gee.cs.oswego.edu/dl/jmm/cookbook.html.
+    //
+    // Critically, any prior STs to _succ or EntryList must be visible before
+    // the ST of null into _owner in the *subsequent* (following) corresponding
+    // monitorexit.  Recall too, that in 1-0 mode monitorexit does not necessarily
+    // execute a serializing instruction.
+
+    if (SyncFlags & 8) {
+        OrderAccess::fence();
+    }
+    return;
+}
+```
 
 #### 释放重量级锁流程
 

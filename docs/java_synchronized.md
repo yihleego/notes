@@ -274,7 +274,7 @@ Constant pool:
 
 ## 锁升级前置介绍
 
-在 Java 6 版本之前，Java 仅支持[重量级锁](#重量级锁-Heavyweight-Locking)，在 Java 6 版本中引入了[偏向锁](#偏向锁-Biased-Locking)和[轻量级锁](#轻量级锁-Lightweight-Locking)。
+在 Java 6 版本之前，仅支持[重量级锁](#重量级锁-Heavyweight-Locking)，在 Java 6 版本中引入了[偏向锁](#偏向锁-Biased-Locking)和[轻量级锁](#轻量级锁-Lightweight-Locking)。
 
 引入的目的是为了在无锁竞争或少竞争的情况下，避免使用重量级锁。因为重量级锁依赖于系统级别的同步函数，在 Linux 中使用`mutex`互斥锁，底层实现依赖于`futex`，这些同步函数都涉及到用户态和内核态的切换、进程的上下文切换，会带来一定的性能开销。
 
@@ -2712,7 +2712,7 @@ void ObjectMonitor::ExitEpilog(Thread *Self, ObjectWaiter *Wakee) {
 
 [/src/share/vm/runtime/synchronizer.cpp#ObjectSynchronizer::deflate_idle_monitors](https://github.com/openjdk/jdk8u/blob/2dadc2bf312d5f947e0735d5ec13c285824db31d/hotspot/src/share/vm/runtime/synchronizer.cpp#L1569)
 
-```
+```cpp
 void ObjectSynchronizer::deflate_idle_monitors() {
     // 显然，必须要在 SafePoint 时才能降级
     assert(SafepointSynchronize::is_at_safepoint(), "must be at safepoint");
@@ -3003,7 +3003,7 @@ Instance size: 16 bytes
 Space losses: 0 bytes internal + 4 bytes external = 4 bytes total
 ```
 
-显然，对重量级锁进行降级，可能会导致 STW 阶段的过度延迟，在这个 [JDK-8149442#MonitorInUseLists should be on by default, deflate idle monitors taking too long](https://bugs.openjdk.org/browse/JDK-8149442) 中提到了这个问题。
+显然，对重量级锁进行降级，可能会导致 STW 阶段的过度延迟，在 [MonitorInUseLists should be on by default, deflate idle monitors taking too long](https://bugs.openjdk.org/browse/JDK-8149442) 中也提到了这个问题。
 
 ## 锁消除 Lock Elimination
 

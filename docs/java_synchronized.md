@@ -385,10 +385,10 @@ SafePoint 在 HotSpot 中是一个核心的技术点，所谓安全点指的是�
 
 ### Monitor
 
-Monitor 是一个同步工具，它的特点是，同一个时刻，只有一个`进程/线程`能进入 Monitor 中定义的临界区，这使得 Monitor 能够达到互斥的效果。
+Monitor 是一个同步工具，它的特点是，同一个时刻只允许一个`进程/线程`进入 Monitor 中定义的临界区，这使得 Monitor 能够达到互斥的效果。
 但仅仅有互斥的作用是不够的，无法进入临界区的`进程/线程`应该被阻塞，并且在必要的时候会被唤醒。
 当然，Monitor 也提供这样的管理`进程/线程`状态的机制，它在内部实现这些机制，并且对外屏蔽掉这些机制，使得使用 Monitor 的人看到的是一个简洁易用的接口。
-在编程中使用`semaphore`信号量和`mutex`互斥量容易出错，因为我们需要亲自操作变量以及对`进程/线程`进行阻塞和唤醒，所以 Monitor 被称为“更高级的原语”。
+在编程中使用`semaphore`信号量和`mutex`互斥量容易出错，通常需要开发者自己操作变量以及对`进程/线程`进行阻塞和唤醒，所以 Monitor 被称为“更高级的原语”。
 
 Monitor 是操作系统提出来的一种高级原语，但其具体的实现模式，不同的编程语言都有可能不一样。下文会介绍 Monitor 在 Java 中的实现方式。
 
@@ -403,22 +403,12 @@ private final Object lock = new Object();
 
 public void lockObject() {
     synchronized (lock) {
-        System.out.println("lockObject");
+        // ...
     }
 }
 
 public synchronized void lockMethod() {
-    System.out.println("lockMethod");
-}
-
-public void lockClass() {
-    synchronized (SynchronizedTest.class) {
-        System.out.println("lockClass");
-    }
-}
-
-public static synchronized void lockStaticMethod() {
-    System.out.println("lockStaticMethod");
+    // ...
 }
 ```
 
@@ -1896,7 +1886,7 @@ void ATTR ObjectMonitor::enter(TRAPS) {
     // 注意，轻量级锁膨胀为重量级锁，第一次调用 ObjectMonitor::enter 会进入这个分支
     if (Self->is_lock_owned((address) cur)) {
         assert(_recursions == 0, "internal state error");
-        // 重置重入次数
+        // 设置重入次数为 1
         _recursions = 1;
         // Commute owner from a thread-specific on-stack BasicLockObject address to
         // a full-fledged "Thread *".
@@ -1983,6 +1973,7 @@ void ATTR ObjectMonitor::enter(TRAPS) {
             // thread that suspended us.
             //
             _recursions = 0;
+            // 这里的 _succ 是 successor 的缩写，中文是继承人，获取锁并不需要继承人，具体功能会在后面介绍
             _succ = NULL;
             exit(false, Self);
 
@@ -2047,21 +2038,9 @@ void ATTR ObjectMonitor::enter(TRAPS) {
 介绍`ObjectMonitor::EnterI`方法之前，先了解一下`ObjectMonitor`的三大队列：`cxq`、`EntryList`和`WaitSet`，其中`EntryList`是双向链表。
 阻塞的线程会进入`cxq`和`EntryList`队列，调用了`wait()`方法睡眠的线程会进入`WaitSet`队列。
 
-##### 为什么`ObjectMonitor`需要`cxq`和`EntryList`两个等待队列？
+为什么`ObjectMonitor`需要`cxq`和`EntryList`两个等待队列？
 
 使用`ObjectMonitor`同步操作会对等待队列的进出队操作。如果只使用一个队列冲突的概率会加大。分成两个队列后，只有加锁的情况才会操作 EntryList 队列，不需要 CAS 和自旋，减少了资源消耗。
-
-##### `cxq`队列中等待的线程什么时候会进入`EntryList`队列
-
-获取锁失败的线程，默认会进`cxq`队列，当持有锁的线程释放锁时，会将`cxq`队列中等待的线程放入`EntryList`队列中。
-
-##### 等待队列中多个线程，唤醒的顺序是什么
-
-当持有锁的线程释放锁时，会先检查`EntryList`队列是否为空，如果不为空，则唤醒`EntryList`队列中第一个节点。否则，会去唤醒`cxq`队列中第一个节点。
-
-##### 偏向锁和轻量级锁是否可以调用`wait()`和`notify()`方法
-
-可以，当前锁的状态是偏向锁或轻量级锁，会先膨胀成重量级锁
 
 [/src/share/vm/interpreter/objectMonitor.cpp#ObjectMonitor::EnterI](https://github.com/openjdk/jdk8u/blob/2dadc2bf312d5f947e0735d5ec13c285824db31d/hotspot/src/share/vm/runtime/objectMonitor.cpp#L508)
 
@@ -2120,7 +2099,7 @@ void ATTR ObjectMonitor::EnterI(TRAPS) {
     // Once on cxq/EntryList, Self stays on-queue until it acquires the lock.
     // Note that spinning tends to reduce the rate at which threads
     // enqueue and dequeue on EntryList|cxq.
-    // 将线程（节点）放到 cxq 队列首位
+    // 将线程（节点）放到 cxq 队列头部
     ObjectWaiter *nxt;
     for (;;) {
         node._next = nxt = _cxq;
@@ -2160,7 +2139,11 @@ void ATTR ObjectMonitor::EnterI(TRAPS) {
     // successors where there was risk of stranding.  This would help eliminate the
     // timer scalability issues we see on some platforms as we'd only have one thread
     // -- the checker -- parked on a timer.
-    // SyncFlags 默认为 0，如果没有其他等待的线程，则将 _Responsible 设置为当前线程
+    // 如果没有其他等待的线程，则将当前线程作为 _Responsible，即负责人（SyncFlags 默认为 0）
+    // 设置负责人的目的是防止所有的线程都进入阻塞，导致无法唤醒性能，
+    // 负责人线程进行阻塞时，只会阻塞一段时间，然后再去尝试获取锁，如果成功获取到了锁，就会卸任负责人，也就是将 _Responsible 置空
+    // 新的负责人会由新的线程来承担，这样可以保证等待队列中的线程会被唤醒。
+    // 同时，为了防止没有新的线程成为负责人，而导致无法唤醒线程，还增加了 _succ，即继承人。持有锁的线程在释放锁的时候，就会唤醒它的继承人线程
     if ((SyncFlags & 16) == 0 && nxt == NULL && _EntryList == NULL) {
         // Try to assume the role of responsible thread for the monitor.
         // CONSIDER:  ST vs CAS vs { if (Responsible==null) Responsible=Self }
@@ -2187,14 +2170,14 @@ void ATTR ObjectMonitor::EnterI(TRAPS) {
 
         if (TryLock(Self) > 0) break;
         assert(_owner != Self, "invariant");
-
+        // 先将当前线程设置为负责人
         if ((SyncFlags & 2) && _Responsible == NULL) {
             Atomic::cmpxchg_ptr(Self, &_Responsible, NULL);
         }
 
         // park self
         if (_Responsible == Self || (SyncFlags & 1)) {
-            // 如果 Responsible 是当前线程，调用 park 并指定超时时间
+            // 如果当前线程是负责人，调用 park 并指定超时时间，而不是一直阻塞
             TEVENT(Inflated enter - park TIMED);
             Self->_ParkEvent->park((jlong) RecheckInterval);
             // Increase the RecheckInterval, but clamp the value.
@@ -2205,7 +2188,7 @@ void ATTR ObjectMonitor::EnterI(TRAPS) {
             TEVENT(Inflated enter - park UNTIMED);
             Self->_ParkEvent->park();
         }
-
+        // 此时可能是负责人定时醒来，也可能是虚假唤醒，尝试获取锁
         if (TryLock(Self) > 0) break;
 
         // The lock is still contested.
@@ -2259,7 +2242,7 @@ void ATTR ObjectMonitor::EnterI(TRAPS) {
     // I'd like to write:
     //   guarantee (((oop)(object()))->mark() == markOopDesc::encode(this), "invariant") ;
     // but as we're at a safepoint that's not safe.
-    // 将当前线程的节点从 cxq 或 EntryList 中移除
+    // 获取锁后，将当前线程的节点从 cxq 或 EntryList 中移除
     UnlinkAfterAcquire(Self, &node);
     if (_succ == Self) _succ = NULL;
 
@@ -2320,11 +2303,707 @@ void ATTR ObjectMonitor::EnterI(TRAPS) {
 
 #### 释放重量级锁流程
 
-TODO
+[/src/share/vm/interpreter/objectMonitor.cpp#ObjectMonitor::exit](https://github.com/openjdk/jdk8u/blob/2dadc2bf312d5f947e0735d5ec13c285824db31d/hotspot/src/share/vm/runtime/objectMonitor.cpp#L962)
+
+```cpp
+void ATTR ObjectMonitor::exit(bool not_suspended, TRAPS) {
+    Thread *Self = THREAD;
+    // 判断 owner 是否为当前线程
+    if (THREAD != _owner) {
+        // 如果当前线程是之前持有轻量级锁的线程，此时，owner 是指向 Lock Record 的指针
+        if (THREAD->is_lock_owned((address) _owner)) {
+            // Transmute _owner from a BasicLock pointer to a Thread address.
+            // We don't need to hold _mutex for this transition.
+            // Non-null to Non-null is safe as long as all readers can
+            // tolerate either flavor.
+            assert(_recursions == 0, "invariant");
+            // 将 owner 指向当前线程
+            _owner = THREAD;
+            _recursions = 0;
+            OwnerIsThread = 1;
+        } else {
+            // NOTE: we need to handle unbalanced monitor enter/exit
+            // in native code by throwing an exception.
+            // TODO: Throw an IllegalMonitorStateException ?
+            // 存在失衡的加锁解锁场景，抛出异常
+            TEVENT(Exit - Throw IMSX);
+            assert(false, "Non-balanced monitor enter/exit!");
+            if (false) {
+                THROW(vmSymbols::java_lang_IllegalMonitorStateException());
+            }
+            return;
+        }
+    }
+    // 重入次数大于 0，说明本次是重入退出同步代码块，只需要减 1 即可返回
+    if (_recursions != 0) {
+        _recursions--;// this is simple recursive enter
+        TEVENT(Inflated exit - recursive);
+        return;
+    }
+
+    // Invariant: after setting Responsible=null an thread must execute
+    // a MEMBAR or other serializing instruction before fetching EntryList|cxq.
+    // 将负责人设置为空
+    if ((SyncFlags & 4) == 0) {
+        _Responsible = NULL;
+    }
+
+#if INCLUDE_JFR
+    // get the owner's thread id for the MonitorEnter event
+    // if it is enabled and the thread isn't suspended
+    if (not_suspended && EventJavaMonitorEnter::is_enabled()) {
+        _previous_owner_tid = JFR_THREAD_ID(Self);
+    }
+#endif
+
+    for (;;) {
+        assert(THREAD == _owner, "invariant");
+
+        // 根据策略，选择不同的释放锁时机，默认为 0
+        if (Knob_ExitPolicy == 0) {
+            // release semantics: prior loads and stores from within the critical section
+            // must not float (reorder) past the following store that drops the lock.
+            // On SPARC that requires MEMBAR #loadstore|#storestore.
+            // But of course in TSO #loadstore|#storestore is not required.
+            // I'd like to write one of the following:
+            // A.  OrderAccess::release() ; _owner = NULL
+            // B.  OrderAccess::loadstore(); OrderAccess::storestore(); _owner = NULL;
+            // Unfortunately OrderAccess::release() and OrderAccess::loadstore() both
+            // store into a _dummy variable.  That store is not needed, but can result
+            // in massive wasteful coherency traffic on classic SMP systems.
+            // Instead, I use release_store(), which is implemented as just a simple
+            // ST on x64, x86 and SPARC.
+            // 采用优先释放锁的策略，先将 owner 设置为 NULL，此时，如果存在其他线程进入同步代码块就能获得锁（非公平锁）
+            OrderAccess::release_store_ptr(&_owner, NULL);// drop the lock
+            OrderAccess::storeload();                     // See if we need to wake a successor
+            // 如果此时 EntryList 和 cxq 中均没有等待的线程，也就是说没有线程需要被唤醒，直接返回
+            // 如果此时 _succ 不为 NULL，说明存在继承人线程，所以不需要唤醒，直接返回
+            if ((intptr_t(_EntryList) | intptr_t(_cxq)) == 0 || _succ != NULL) {
+                TEVENT(Inflated exit - simple egress);
+                return;
+            }
+            TEVENT(Inflated exit - complex egress);
+
+            // Normally the exiting thread is responsible for ensuring succession,
+            // but if other successors are ready or other entering threads are spinning
+            // then this thread can simply store NULL into _owner and exit without
+            // waking a successor.  The existence of spinners or ready successors
+            // guarantees proper succession (liveness).  Responsibility passes to the
+            // ready or running successors.  The exiting thread delegates the duty.
+            // More precisely, if a successor already exists this thread is absolved
+            // of the responsibility of waking (unparking) one.
+            //
+            // The _succ variable is critical to reducing futile wakeup frequency.
+            // _succ identifies the "heir presumptive" thread that has been made
+            // ready (unparked) but that has not yet run.  We need only one such
+            // successor thread to guarantee progress.
+            // See http://www.usenix.org/events/jvm01/full_papers/dice/dice.pdf
+            // section 3.3 "Futile Wakeup Throttling" for details.
+            //
+            // Note that spinners in Enter() also set _succ non-null.
+            // In the current implementation spinners opportunistically set
+            // _succ so that exiting threads might avoid waking a successor.
+            // Another less appealing alternative would be for the exiting thread
+            // to drop the lock and then spin briefly to see if a spinner managed
+            // to acquire the lock.  If so, the exiting thread could exit
+            // immediately without waking a successor, otherwise the exiting
+            // thread would need to dequeue and wake a successor.
+            // (Note that we'd need to make the post-drop spin short, but no
+            // shorter than the worst-case round-trip cache-line migration time.
+            // The dropped lock needs to become visible to the spinner, and then
+            // the acquisition of the lock by the spinner must become visible to
+            // the exiting thread).
+            //
+
+            // It appears that an heir-presumptive (successor) must be made ready.
+            // Only the current lock owner can manipulate the EntryList or
+            // drain _cxq, so we need to reacquire the lock.  If we fail
+            // to reacquire the lock the responsibility for ensuring succession
+            // falls to the new owner.
+            //
+            // 后续代码中，需要在有锁状态下操作 EntryList 和 cxq，所以需要重新获取锁
+            // 如果获取锁失败，则由新的 owner 完成后续操作，这里直接返回
+            if (Atomic::cmpxchg_ptr(THREAD, &_owner, NULL) != NULL) {
+                return;
+            }
+            TEVENT(Exit - Reacquired);
+        } else {
+            // 该分支与上面的分支逻辑唯一差别就是释放锁的时机，不再赘述
+            if ((intptr_t(_EntryList) | intptr_t(_cxq)) == 0 || _succ != NULL) {
+                OrderAccess::release_store_ptr(&_owner, NULL);// drop the lock
+                OrderAccess::storeload();
+                // Ratify the previously observed values.
+                if (_cxq == NULL || _succ != NULL) {
+                    TEVENT(Inflated exit - simple egress);
+                    return;
+                }
+
+                // inopportune interleaving -- the exiting thread (this thread)
+                // in the fast-exit path raced an entering thread in the slow-enter
+                // path.
+                // We have two choices:
+                // A.  Try to reacquire the lock.
+                //     If the CAS() fails return immediately, otherwise
+                //     we either restart/rerun the exit operation, or simply
+                //     fall-through into the code below which wakes a successor.
+                // B.  If the elements forming the EntryList|cxq are TSM
+                //     we could simply unpark() the lead thread and return
+                //     without having set _succ.
+                if (Atomic::cmpxchg_ptr(THREAD, &_owner, NULL) != NULL) {
+                    TEVENT(Inflated exit - reacquired succeeded);
+                    return;
+                }
+                TEVENT(Inflated exit - reacquired failed);
+            } else {
+                TEVENT(Inflated exit - complex egress);
+            }
+        }
+
+        guarantee(_owner == THREAD, "invariant");
+
+        ObjectWaiter *w = NULL;
+
+        // 唤醒策略，默认为 0
+        // QMode == 0: 优先唤醒 EntryList 的头部节点，如果为空，则将 cxq 中的节点移动到 EntryList 中，然后再去唤醒 EntryList 的头部节点
+        // QMode == 1: 流程同上，不同的是，移动节点的同时，会反转链表
+        // QMode == 2: 优先唤醒 cxq 的头部节点，如果为空，则去唤醒 EntryList 的头部节点，没有移动操作
+        // QMode == 3: 优先将 cxq 的节点移动到 EntryList 的尾部，然后去唤醒 EntryList 的头部节点
+        // QMode == 4: 优先将 cxq 的节点移动到 EntryList 的头部，然后去唤醒 EntryList 的头部节点
+        // 注意：如果 cxq 和 EntryList 均为空，也就不需要唤醒操作了，因为没有线程需要被唤醒
+        // 注意：上述中，移动节点指的逻辑上的操作，实际可能为直接覆盖、拼接链表。由于 cxq 是单向链表，而 EntryList 是双向链表，因此移动过程中需要转化操作
+        int QMode = Knob_QMode;
+
+        if (QMode == 2 && _cxq != NULL) {
+            // QMode == 2 : cxq has precedence over EntryList.
+            // Try to directly wake a successor from the cxq.
+            // If successful, the successor will need to unlink itself from cxq.
+            w = _cxq;
+            assert(w != NULL, "invariant");
+            assert(w->TState == ObjectWaiter::TS_CXQ, "Invariant");
+            // 取 cxq 队列头部节点，调用 ExitEpilog 方法唤醒线程
+            ExitEpilog(Self, w);
+            // 返回即可
+            return;
+        }
+
+        if (QMode == 3 && _cxq != NULL) {
+            // Aggressively drain cxq into EntryList at the first opportunity.
+            // This policy ensure that recently-run threads live at the head of EntryList.
+            // Drain _cxq into EntryList - bulk transfer.
+            // First, detach _cxq.
+            // The following loop is tantamount to: w = swap (&cxq, NULL)
+            // 将 cxq 清空，因为 cxq 会被移动到 EntryList 尾部
+            w = _cxq;
+            for (;;) {
+                assert(w != NULL, "Invariant");
+                ObjectWaiter *u = (ObjectWaiter *) Atomic::cmpxchg_ptr(NULL, &_cxq, w);
+                if (u == w) break;
+                w = u;
+            }
+            assert(w != NULL, "invariant");
+            // 将原 cxq 转化为双向链表，因为 cxq 是单向链表，而 EntryList 是双向链表
+            ObjectWaiter *q = NULL;
+            ObjectWaiter *p;
+            for (p = w; p != NULL; p = p->_next) {
+                guarantee(p->TState == ObjectWaiter::TS_CXQ, "Invariant");
+                p->TState = ObjectWaiter::TS_ENTER;
+                p->_prev = q;
+                q = p;
+            }
+
+            // Append the RATs to the EntryList
+            // TODO: organize EntryList as a CDLL so we can locate the tail in constant-time.
+            // 找到 EntryList 尾部节点
+            ObjectWaiter *Tail;
+            for (Tail = _EntryList; Tail != NULL && Tail->_next != NULL; Tail = Tail->_next)
+                ;
+            // 将 cxq 追加到 EntryList 尾部
+            if (Tail == NULL) {
+                _EntryList = w;
+            } else {
+                Tail->_next = w;
+                w->_prev = Tail;
+            }
+
+            // Fall thru into code that tries to wake a successor from EntryList
+        }
+
+        if (QMode == 4 && _cxq != NULL) {
+            // Aggressively drain cxq into EntryList at the first opportunity.
+            // This policy ensure that recently-run threads live at the head of EntryList.
+
+            // Drain _cxq into EntryList - bulk transfer.
+            // First, detach _cxq.
+            // The following loop is tantamount to: w = swap (&cxq, NULL)
+            // 将 cxq 清空，因为 cxq 会被移动到 EntryList 头部
+            w = _cxq;
+            for (;;) {
+                assert(w != NULL, "Invariant");
+                ObjectWaiter *u = (ObjectWaiter *) Atomic::cmpxchg_ptr(NULL, &_cxq, w);
+                if (u == w) break;
+                w = u;
+            }
+            assert(w != NULL, "invariant");
+            // 将原 cxq 转化为双向链表，因为 cxq 是单向链表，而 EntryList 是双向链表
+            ObjectWaiter *q = NULL;
+            ObjectWaiter *p;
+            for (p = w; p != NULL; p = p->_next) {
+                guarantee(p->TState == ObjectWaiter::TS_CXQ, "Invariant");
+                p->TState = ObjectWaiter::TS_ENTER;
+                p->_prev = q;
+                q = p;
+            }
+
+            // Prepend the RATs to the EntryList
+            // 逻辑上，将 cxq 插入到 EntryList 头部
+            // 实际上，将 EntryList 追加到 cxq 尾部，然后用 cxq 替换 EntryList，结果是一样
+            if (_EntryList != NULL) {
+                q->_next = _EntryList;
+                _EntryList->_prev = q;
+            }
+            _EntryList = w;
+
+            // Fall thru into code that tries to wake a successor from EntryList
+        }
+
+        // 如果 EntryList 不为空，唤醒 EntryList 的头部节点，然后返回
+        w = _EntryList;
+        if (w != NULL) {
+            // I'd like to write: guarantee (w->_thread != Self).
+            // But in practice an exiting thread may find itself on the EntryList.
+            // Lets say thread T1 calls O.wait().  Wait() enqueues T1 on O's waitset and
+            // then calls exit().  Exit release the lock by setting O._owner to NULL.
+            // Lets say T1 then stalls.  T2 acquires O and calls O.notify().  The
+            // notify() operation moves T1 from O's waitset to O's EntryList. T2 then
+            // release the lock "O".  T2 resumes immediately after the ST of null into
+            // _owner, above.  T2 notices that the EntryList is populated, so it
+            // reacquires the lock and then finds itself on the EntryList.
+            // Given all that, we have to tolerate the circumstance where "w" is
+            // associated with Self.
+            assert(w->TState == ObjectWaiter::TS_ENTER, "invariant");
+            ExitEpilog(Self, w);
+            return;
+        }
+
+        // If we find that both _cxq and EntryList are null then just
+        // re-run the exit protocol from the top.
+        // 如果 cxq 和 EntryList 均为空，从头开始重新执行
+        w = _cxq;
+        if (w == NULL) continue;
+
+        // Drain _cxq into EntryList - bulk transfer.
+        // First, detach _cxq.
+        // The following loop is tantamount to: w = swap (&cxq, NULL)
+        // 此时，cxq 不为空，EntryList 为空
+        // 将 cxq 清空，因为 cxq 会被移动到 EntryList 中
+        for (;;) {
+            assert(w != NULL, "Invariant");
+            ObjectWaiter *u = (ObjectWaiter *) Atomic::cmpxchg_ptr(NULL, &_cxq, w);
+            if (u == w) break;
+            w = u;
+        }
+        TEVENT(Inflated exit - drain cxq into EntryList);
+
+        assert(w != NULL, "invariant");
+        assert(_EntryList == NULL, "invariant");
+
+        // Convert the LIFO SLL anchored by _cxq into a DLL.
+        // The list reorganization step operates in O(LENGTH(w)) time.
+        // It's critical that this step operate quickly as
+        // "Self" still holds the outer-lock, restricting parallelism
+        // and effectively lengthening the critical section.
+        // Invariant: s chases t chases u.
+        // TODO-FIXME: consider changing EntryList from a DLL to a CDLL so
+        // we have faster access to the tail.
+
+        if (QMode == 1) {
+            // QMode == 1 : drain cxq to EntryList, reversing order
+            // We also reverse the order of the list.
+            // 将 cxq 转化为双向链表，并反转列表，然后替换 EntryList
+            ObjectWaiter *s = NULL;
+            ObjectWaiter *t = w;
+            ObjectWaiter *u = NULL;
+            while (t != NULL) {
+                guarantee(t->TState == ObjectWaiter::TS_CXQ, "invariant");
+                t->TState = ObjectWaiter::TS_ENTER;
+                u = t->_next;
+                t->_prev = u;
+                t->_next = s;
+                s = t;
+                t = u;
+            }
+            _EntryList = s;
+            assert(s != NULL, "invariant");
+        } else {
+            // QMode == 0 or QMode == 2
+            // 将 cxq 转化为双向链表，然后替换 EntryList
+            _EntryList = w;
+            ObjectWaiter *q = NULL;
+            ObjectWaiter *p;
+            for (p = w; p != NULL; p = p->_next) {
+                guarantee(p->TState == ObjectWaiter::TS_CXQ, "Invariant");
+                p->TState = ObjectWaiter::TS_ENTER;
+                p->_prev = q;
+                q = p;
+            }
+        }
+
+        // In 1-0 mode we need: ST EntryList; MEMBAR #storestore; ST _owner = NULL
+        // The MEMBAR is satisfied by the release_store() operation in ExitEpilog().
+
+        // See if we can abdicate to a spinner instead of waking a thread.
+        // A primary goal of the implementation is to reduce the
+        // context-switch rate.
+        // 如果此时 _succ 不为 NULL，说明存在继承人线程，所以不需要唤醒，为了保险起见，从头开始重新执行
+        if (_succ != NULL) continue;
+
+        // 唤醒 EntryList 的头部节点
+        w = _EntryList;
+        if (w != NULL) {
+            guarantee(w->TState == ObjectWaiter::TS_ENTER, "invariant");
+            ExitEpilog(Self, w);
+            return;
+        }
+    }
+}
+```
+
+[/src/share/vm/interpreter/objectMonitor.cpp#ObjectMonitor::ExitEpilog](https://github.com/openjdk/jdk8u/blob/2dadc2bf312d5f947e0735d5ec13c285824db31d/hotspot/src/share/vm/runtime/objectMonitor.cpp#L1333)
+
+```cpp
+void ObjectMonitor::ExitEpilog(Thread *Self, ObjectWaiter *Wakee) {
+    assert(_owner == Self, "invariant");
+
+    // Exit protocol:
+    // 1. ST _succ = wakee
+    // 2. membar #loadstore|#storestore;
+    // 2. ST _owner = NULL
+    // 3. unpark(wakee)
+    
+    // 将要被唤醒的线程设置为继承人
+    _succ = Knob_SuccEnabled ? Wakee->_thread : NULL;
+    ParkEvent *Trigger = Wakee->_event;
+
+    // Hygiene -- once we've set _owner = NULL we can't safely dereference Wakee again.
+    // The thread associated with Wakee may have grabbed the lock and "Wakee" may be
+    // out-of-scope (non-extant).
+    Wakee = NULL;
+
+    // Drop the lock
+    // 将 owner 设置为 NULL 释放锁
+    OrderAccess::release_store_ptr(&_owner, NULL);
+    OrderAccess::fence();// ST _owner vs LD in unpark()
+
+    if (SafepointSynchronize::do_call_back()) {
+        TEVENT(unpark before SAFEPOINT);
+    }
+    // 调用 unpark 唤醒当前线程
+    DTRACE_MONITOR_PROBE(contended__exit, this, object(), Self);
+    Trigger->unpark();
+
+    // Maintain stats and report events to JVMTI
+    if (ObjectMonitor::_sync_Parks != NULL) {
+        ObjectMonitor::_sync_Parks->inc();
+    }
+}
+```
 
 #### 重量级锁降级流程
 
-TODO
+[/src/share/vm/runtime/synchronizer.cpp#ObjectSynchronizer::deflate_idle_monitors](https://github.com/openjdk/jdk8u/blob/2dadc2bf312d5f947e0735d5ec13c285824db31d/hotspot/src/share/vm/runtime/synchronizer.cpp#L1569)
+
+```
+void ObjectSynchronizer::deflate_idle_monitors() {
+    // 显然，必须要在 SafePoint 时才能降级
+    assert(SafepointSynchronize::is_at_safepoint(), "must be at safepoint");
+    int nInuse = 0;        // currently associated with objects
+    int nInCirculation = 0;// extant
+    int nScavenged = 0;    // reclaimed
+    bool deflated = false;
+
+    ObjectMonitor *FreeHead = NULL;// Local SLL of scavenged monitors
+    ObjectMonitor *FreeTail = NULL;
+
+    TEVENT(deflate_idle_monitors);
+    // Prevent omFlush from changing mids in Thread dtor's during deflation
+    // And in case the vm thread is acquiring a lock during a safepoint
+    // See e.g. 6320749
+    // 获取锁
+    Thread::muxAcquire(&ListLock, "scavenge - return");
+
+    // 判断是否需要跟踪监视器降级，默认为 false
+    if (MonitorInUseLists) {
+        int inUse = 0;
+        for (JavaThread *cur = Threads::first(); cur != NULL; cur = cur->next()) {
+            nInCirculation += cur->omInUseCount;
+            int deflatedcount = walk_monitor_list(cur->omInUseList_addr(), &FreeHead, &FreeTail);
+            cur->omInUseCount -= deflatedcount;
+            // verifyInUse(cur);
+            nScavenged += deflatedcount;
+            nInuse += cur->omInUseCount;
+        }
+
+        // For moribund threads, scan gOmInUseList
+        if (gOmInUseList) {
+            nInCirculation += gOmInUseCount;
+            int deflatedcount = walk_monitor_list((ObjectMonitor **) &gOmInUseList, &FreeHead, &FreeTail);
+            gOmInUseCount -= deflatedcount;
+            nScavenged += deflatedcount;
+            nInuse += gOmInUseCount;
+        }
+
+    } else {
+        // 默认情况下会进入这个分支
+        ObjectMonitor *block = (ObjectMonitor *) OrderAccess::load_ptr_acquire(&gBlockList);
+        for (; block != NULL; block = (ObjectMonitor *) next(block)) {
+            // Iterate over all extant monitors - Scavenge all idle monitors.
+            // 遍历所有现存 ObjectMonitor
+            assert(block->object() == CHAINMARKER, "must be a block header");
+            nInCirculation += _BLOCKSIZE;
+            for (int i = 1; i < _BLOCKSIZE; i++) {
+                ObjectMonitor *mid = (ObjectMonitor *) &block[i];
+                oop obj = (oop) mid->object();
+                // 如果 obj 为 NULL，说明该 ObjectMonitor 还未分配，跳过
+                if (obj == NULL) {
+                    // The monitor is not associated with an object.
+                    // The monitor should either be a thread-specific private
+                    // free list or the global free list.
+                    // obj == NULL IMPLIES mid->is_busy() == 0
+                    guarantee(!mid->is_busy(), "invariant");
+                    continue;
+                }
+                // 调用 ObjectSynchronizer::deflate_monitor 方法尝试降级
+                deflated = deflate_monitor(mid, obj, &FreeHead, &FreeTail);
+
+                if (deflated) {
+                    mid->FreeNext = NULL;
+                    nScavenged++;
+                } else {
+                    nInuse++;
+                }
+            }
+        }
+    }
+
+    MonitorFreeCount += nScavenged;
+
+    // Consider: audit gFreeList to ensure that MonitorFreeCount and list agree.
+
+    if (ObjectMonitor::Knob_Verbose) {
+        ::printf("Deflate: InCirc=%d InUse=%d Scavenged=%d ForceMonitorScavenge=%d : pop=%d free=%d\n",
+                 nInCirculation, nInuse, nScavenged, ForceMonitorScavenge,
+                 MonitorPopulation, MonitorFreeCount);
+        ::fflush(stdout);
+    }
+
+    ForceMonitorScavenge = 0;// Reset
+
+    // Move the scavenged monitors back to the global free list.
+    // 将需要回收的 monitors 放到 gFreeList 中
+    if (FreeHead != NULL) {
+        guarantee(FreeTail != NULL && nScavenged > 0, "invariant");
+        assert(FreeTail->FreeNext == NULL, "invariant");
+        // constant-time list splice - prepend scavenged segment to gFreeList
+        FreeTail->FreeNext = gFreeList;
+        gFreeList = FreeHead;
+    }
+    // 释放锁
+    Thread::muxRelease(&ListLock);
+
+    if (ObjectMonitor::_sync_Deflations != NULL) ObjectMonitor::_sync_Deflations->inc(nScavenged);
+    if (ObjectMonitor::_sync_MonExtant != NULL) ObjectMonitor::_sync_MonExtant->set_value(nInCirculation);
+
+    // TODO: Add objectMonitor leak detection.
+    // Audit/inventory the objectMonitors -- make sure they're all accounted for.
+    GVars.stwRandom = os::random();
+    GVars.stwCycle++;
+}
+```
+
+[/src/share/vm/runtime/synchronizer.cpp#ObjectSynchronizer::deflate_monitor](https://github.com/openjdk/jdk8u/blob/2dadc2bf312d5f947e0735d5ec13c285824db31d/hotspot/src/share/vm/runtime/synchronizer.cpp#L1489)
+
+```cpp
+// Deflate a single monitor if not in use
+// Return true if deflated, false if in use
+bool ObjectSynchronizer::deflate_monitor(ObjectMonitor *mid, oop obj, ObjectMonitor **FreeHeadp, ObjectMonitor **FreeTailp) {
+    bool deflated;
+    // Normal case ... The monitor is associated with obj.
+    guarantee(obj->mark() == markOopDesc::encode(mid), "invariant");
+    guarantee(mid == obj->mark()->monitor(), "invariant");
+    guarantee(mid->header()->is_neutral(), "invariant");
+
+    // 调用 is_busy() 判断 monitor 是否正在使用中，判断内容包含以下：
+    // _count|_waiters|intptr_t(_owner)|intptr_t(_cxq)|intptr_t(_EntryList)
+    if (mid->is_busy()) {
+        if (ClearResponsibleAtSTW) mid->_Responsible = NULL;
+        deflated = false;
+    } else {
+        // Deflate the monitor if it is no longer being used
+        // It's idle - scavenge and return to the global free list
+        // plain old deflation ...
+        TEVENT(deflate_idle_monitors - scavenge1);
+        if (TraceMonitorInflation) {
+            if (obj->is_instance()) {
+                ResourceMark rm;
+                tty->print_cr("Deflating object " INTPTR_FORMAT " , mark " INTPTR_FORMAT " , type %s",
+                              (void *) obj, (intptr_t) obj->mark(), obj->klass()->external_name());
+            }
+        }
+
+        // Restore the header back to obj
+        // 将锁对象的 Mark Word 设置为无锁状态（001）
+        obj->release_set_mark(mid->header());
+        mid->clear();
+
+        assert(mid->object() == NULL, "invariant");
+
+        // Move the object to the working free list defined by FreeHead,FreeTail.
+        // 将 monitor 放到空闲链表中，等待释放
+        if (*FreeHeadp == NULL) *FreeHeadp = mid;
+        if (*FreeTailp != NULL) {
+            ObjectMonitor *prevtail = *FreeTailp;
+            assert(prevtail->FreeNext == NULL, "cleaned up deflated?");// TODO KK
+            prevtail->FreeNext = mid;
+        }
+        *FreeTailp = mid;
+        deflated = true;
+    }
+    return deflated;
+}
+```
+
+简单的说就是，所有线程到达 SafePoint 时，会搜索空闲的 monitor（没有线程持有锁、也没有线程等待或阻塞），然后将其关联的锁对象解锁，最后会释放分配给 monitor 的资源。
+
+使用 [OpenJDK JOL](https://github.com/openjdk/jol) 实现的示例如下：
+
+运行环境如下：
+
+- Java Version: 11.0.16
+- Java VM: Java HotSpot(TM) 64-Bit Server VM
+- VM Options: `-XX:-UseBiasedLocking`
+
+```java
+public void testHeavyweightLockingDeflate() {
+    print("无锁时");
+    // 创建多个线程竞争，直接膨胀为重量级锁
+    Thread[] ts = new Thread[3];
+    for (int i = 0; i < ts.length; i++) {
+        final int f = i;
+        ts[i] = new Thread(() -> {
+            synchronized (lock) {
+                print("[线程-" + f + "] 获取锁");
+            }
+            print("[线程-" + f + "] 释放锁");
+        });
+        ts[i].start();
+    }
+    // 等待所有线程执行完成
+    while (true) {
+        int count = 0;
+        for (Thread t : ts) {
+            if (!t.isAlive()) count++;
+        }
+        if (count == ts.length) break;
+    }
+    // 无竞争后，依然是重量级锁
+    print("无竞争后");
+    // 手动触发 GC
+    System.gc();
+    // 锁被重置为无锁状态
+    print("触发 GC 后");
+}
+
+public void print(String prefix) {
+    System.out.println(prefix + "\n" + ClassLayout.parseInstance(lock).toPrintable());
+}
+```
+
+输出结果：
+
+```
+无锁时
+java.lang.Object object internals:
+OFF  SZ   TYPE DESCRIPTION               VALUE
+  0   8        (object header: mark)     0x0000000000000001 (non-biasable; age: 0)
+  8   4        (object header: class)    0x00001000
+ 12   4        (object alignment gap)    
+Instance size: 16 bytes
+Space losses: 0 bytes internal + 4 bytes external = 4 bytes total
+
+[线程-0] 获取锁
+java.lang.Object object internals:
+OFF  SZ   TYPE DESCRIPTION               VALUE
+  0   8        (object header: mark)     0x0000000110d7bf02 (fat lock: 0x0000000110d7bf02)
+  8   4        (object header: class)    0x00001000
+ 12   4        (object alignment gap)    
+Instance size: 16 bytes
+Space losses: 0 bytes internal + 4 bytes external = 4 bytes total
+
+[线程-0] 释放锁
+java.lang.Object object internals:
+OFF  SZ   TYPE DESCRIPTION               VALUE
+  0   8        (object header: mark)     0x0000000110d7bf02 (fat lock: 0x0000000110d7bf02)
+  8   4        (object header: class)    0x00001000
+ 12   4        (object alignment gap)    
+Instance size: 16 bytes
+Space losses: 0 bytes internal + 4 bytes external = 4 bytes total
+
+[线程-1] 获取锁
+java.lang.Object object internals:
+OFF  SZ   TYPE DESCRIPTION               VALUE
+  0   8        (object header: mark)     0x0000000110d7bf02 (fat lock: 0x0000000110d7bf02)
+  8   4        (object header: class)    0x00001000
+ 12   4        (object alignment gap)    
+Instance size: 16 bytes
+Space losses: 0 bytes internal + 4 bytes external = 4 bytes total
+
+[线程-1] 释放锁
+java.lang.Object object internals:
+OFF  SZ   TYPE DESCRIPTION               VALUE
+  0   8        (object header: mark)     0x0000000110d7bf02 (fat lock: 0x0000000110d7bf02)
+  8   4        (object header: class)    0x00001000
+ 12   4        (object alignment gap)    
+Instance size: 16 bytes
+Space losses: 0 bytes internal + 4 bytes external = 4 bytes total
+
+[线程-2] 获取锁
+java.lang.Object object internals:
+OFF  SZ   TYPE DESCRIPTION               VALUE
+  0   8        (object header: mark)     0x0000000110d7bf02 (fat lock: 0x0000000110d7bf02)
+  8   4        (object header: class)    0x00001000
+ 12   4        (object alignment gap)    
+Instance size: 16 bytes
+Space losses: 0 bytes internal + 4 bytes external = 4 bytes total
+
+[线程-2] 释放锁
+java.lang.Object object internals:
+OFF  SZ   TYPE DESCRIPTION               VALUE
+  0   8        (object header: mark)     0x0000000110d7bf02 (fat lock: 0x0000000110d7bf02)
+  8   4        (object header: class)    0x00001000
+ 12   4        (object alignment gap)    
+Instance size: 16 bytes
+Space losses: 0 bytes internal + 4 bytes external = 4 bytes total
+
+无竞争后
+java.lang.Object object internals:
+OFF  SZ   TYPE DESCRIPTION               VALUE
+  0   8        (object header: mark)     0x0000000110d7bf02 (fat lock: 0x0000000110d7bf02)
+  8   4        (object header: class)    0x00001000
+ 12   4        (object alignment gap)    
+Instance size: 16 bytes
+Space losses: 0 bytes internal + 4 bytes external = 4 bytes total
+
+触发 GC 后
+java.lang.Object object internals:
+OFF  SZ   TYPE DESCRIPTION               VALUE
+  0   8        (object header: mark)     0x0000000000000001 (non-biasable; age: 0)
+  8   4        (object header: class)    0x00001000
+ 12   4        (object alignment gap)    
+Instance size: 16 bytes
+Space losses: 0 bytes internal + 4 bytes external = 4 bytes total
+```
+
+显然，对重量级锁进行降级，可能会导致 STW 阶段的过度延迟，在这个 [JDK-8149442#MonitorInUseLists should be on by default, deflate idle monitors taking too long](https://bugs.openjdk.org/browse/JDK-8149442) 中提到了这个问题。
 
 ## 锁消除 Lock Elimination
 

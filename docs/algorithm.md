@@ -68,3 +68,5 @@ func highest(heights []int) int {
 - 二叉堆
 - TopK
 - 无锁链表
+- LRU
+- LFU

@@ -30,7 +30,7 @@
     - [Redis](docs/redis.md)
     - [MongoDB](docs/mongodb.md)
     - [TiDB](docs/tidb.md)
-- Middleware
+- Middlewares
     - [Elasticsearch](docs/elasticsearch.md)
     - [RocketMQ](docs/rocketmq.md)
     - [RabbitMQ](docs/rabbitmq.md)
@@ -38,6 +38,10 @@
 - Solutions
     - [Seata](docs/seata.md)
     - [ShardingSphere](docs/shardingsphere.md)
+- Utilities
+    - [Guava](docs/guava.md)
+    - [Lombok](docs/lombok.md)
+    - [Byte Buddy](docs/bytebuddy.md)
 - DevOps
     - [Docker](docs/docker.md)
     - [Kubernetes](docs/kubernetes.md)

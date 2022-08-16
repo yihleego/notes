@@ -130,6 +130,31 @@ Result solve(Problem problem) {
 让窃取任务的线程从队列拥有者相反的方向进行操作可以减少线程竞争，同样体现了递归分治算法的大任务优先策略。
 因此，更早期被窃取的任务有可能会提供一个更大的单元任务，从而使得窃取线程能够在将来进行递归分解。
 
+#### Demo
+
+划分成两个子任务时，不要同时调用两个子任务的`fork()`方法。直接调用`compute()`效率更高。因为直接调用子任务的`compute()`方法实际上就是在当前的工作线程进行了计算(线程重用)，这比“将子任务提交到工作队列，线程又从工作队列中拿任务”快得多。
+
+```java
+static class Fibonacci extends RecursiveTask<Integer> {
+    final int n;
+
+    Fibonacci(int n) {
+        this.n = n;
+    }
+
+    @Override
+    protected Integer compute() {
+        if (n <= 1) {
+            return n;
+        }
+        Fibonacci f1 = new Fibonacci(n - 1);
+        Fibonacci f2 = new Fibonacci(n - 2);
+        f1.fork();
+        return f2.compute() + f1.join();
+    }
+}
+```
+
 ## ThreadLocal
 
 `ThreadLocal`提供了线程内的局部变量，这种变量在线程的生命周期内起作用，减少同一个线程内多个方法或者组件之间一些公共变量的传递的复杂度。但是如果滥用`ThreadLocal`，就可能会导致内存泄漏

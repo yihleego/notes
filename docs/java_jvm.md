@@ -8,7 +8,6 @@ Java虚拟机在执行Java程序的过程中会把它所管理的内存划分为
 
 从 JCP（Java Community Process）的官网中可以看到，目前 Java 版本最新已经到了 Java 16，未来的 Java 17 以及现在的 Java 11 和 Java 8 是 LTS 版本，JVM 规范也在随着迭代在变更，由于本文主要讨论 CMS，此处还是放 Java 8 的内存结构。
 
-
 ![java_jvm_runtime_data_areas_new.png](images/java_jvm_runtime_data_areas_new.png)
 
 GC 主要工作在 Heap 区和 MetaSpace 区（上图蓝色部分），在 Direct Memory 中，如果使用的是 DirectByteBuffer，那么在分配内存不够时则是 GC 通过 Cleaner#clean 间接管理。
@@ -84,6 +83,14 @@ _请注意，这里说的“大小”是指变量槽的数量，虚拟机真正�
 
 堆既可以被实现成固定大小的，也可以是可扩展的，不过当前主流的Java虚拟机都是按照可扩展来实现的（通过参数`-Xmx`和`-Xms`设定）。
 如果在堆中没有内存完成实例分配，并且堆也无法再扩展时，Java 虚拟机将会抛出`OutOfMemoryError`异常。
+
+### TLAB Thread Local Allocation Buffer
+
+从内存模型而不是垃圾回收的角度，对 Eden 区域继续进行划分，JVM 为每个线程分配了一个私有缓存区域，它包含在 Eden 空间内多线程同时分配内存时，使用 TLAB 可以避免一系列的非线程安全问题，同时还能提升内存分配的吞吐量，因此我们可以将这种内存分配方式称为快速分配策略OpenJDK 衍生出来的 JVM 大都提供了 TLAB 设计。
+
+为什么要有 TLAB ?
+
+堆区是线程共享的，任何线程都可以访问到堆区中的共享数据由于对象实例的创建在 JVM 中非常频繁，因此在并发环境下从堆区中划分内存空间是线程不安全的为避免多个线程操作同一地址，需要使用加锁等机制，进而影响分配速度尽管不是所有的对象实例都能够在 TLAB 中成功分配内存，但 JVM 确实是将 TLAB 作为内存分配的首选。在程序中，可以通过 -XX:UseTLAB 设置是否开启 TLAB 空间。默认情况下，TLAB 空间的内存非常小，仅占有整个 Eden 空间的 1%，我们可以通过 -XX:TLABWasteTargetPercent 设置 TLAB 空间所占用 Eden 空间的百分比大小。一旦对象在 TLAB 空间分配内存失败时，JVM 就会尝试着通过使用加锁机制确保数据操作的原子性，从而直接在 Eden 空间中分配内存。
 
 ### 方法区 Method Area
 

@@ -800,6 +800,8 @@ public V get(Object key) {
 
 `CopyOnWriteArrayList`基本的结构，`lock`属性是一个可重入锁，`array`属性存放元素，并且访问都通过`getArray()`和`setArray()`方法。
 
+> 高版本中已经将`ReentrantLock`替换为`Object`，使用`synchronized`代替。
+
 ```java
 public class CopyOnWriteArrayList<E>
     implements List<E>, RandomAccess, Cloneable, java.io.Serializable {

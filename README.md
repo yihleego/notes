@@ -9,8 +9,13 @@
         - [Thread](docs/java_thread.md)
         - [JVM](docs/java_jvm.md)
         - [Proxy](docs/java_proxy.md)
+    - Python
+        - [Python 🌧️](docs/python.md)
+        - [PEP8 🌧️](docs/python_pep8.md)
+        - [Frameworks 🌧️](docs/python_frameworks.md)
+        - [Tools 🌧️](docs/python_tools.md)
+        - [AI 🌧️](docs/python_ai.md)
     - [Go 🌧️](docs/go.md)
-    - [Python 🌧️](docs/python.md)
 - Frameworks
     - [Spring ☀️](docs/spring.md)
     - [Spring MVC ☀️](docs/springmvc.md)

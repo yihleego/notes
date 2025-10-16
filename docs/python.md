@@ -117,12 +117,17 @@ def bfs(graph, start):
 ### is 与 == 的区别，id() 的作用
 
 #### ==
+
 - 比较的是 值是否相等。
 - 即两个对象内容相同，就返回 True，不管它们是不是同一个对象。
+
 #### is
+
 - 比较的是 对象的身份是否相同。
 - 即比较两者的 内存地址（id） 是否相同，只有指向同一个对象时才返回 True。
+
 #### id() 的作用
+
 - id(obj) 返回对象的 内存地址标识（唯一标识符）。
 - 在 CPython 实现中，id() 的返回值就是对象的内存地址（十进制形式）。
 - 可以用来判断两个变量是否引用同一个对象。
@@ -584,102 +589,349 @@ The above exception was the direct cause of the following exception:
 ## 性能与优化
 
 ### 如何分析 Python 程序的性能瓶颈？（cProfile, line_profiler 等工具）
+
+1. 先用 cProfile 定位到大致耗时函数。（本地）
+2. 再用 line_profiler 分析函数内部逐行耗时。（本地）
+3. 如果怀疑 内存或 I/O，用 memory_profiler 或 scalene。（本地）
+4. 如果程序运行时间长或难以改代码，直接用 py-spy 火焰图。（生产attach 火焰图 Flame Graph）
+
 ### 列举几种 Python 优化性能的手段（如 Cython、NumPy 向量化、缓存、并发）。
+
+- 合理选择数据结构（如 set 查找比 list 快）。
+- 减少不必要的对象创建，避免深层嵌套循环。
+- 使用生成器（yield）减少内存消耗。
+- 大量对象使用__slots__代替__dict__
+- 缓存
+- 避免不要的循环引用
+
 ### deepcopy vs copy 的区别和性能影响。
+
+#### 浅拷贝
+
+作用：创建一个新对象，但只拷贝对象的最外层，内部的可变对象（如 list、dict、set）只复制引用。
+结果：修改浅拷贝对象里嵌套的可变数据，会影响原对象。
+
+```python
+import copy
+
+a = [1, [2, 3]]
+b = copy.copy(a)
+
+b[0] = 99       # 改最外层，不影响 a
+b[1][0] = 88    # 改嵌套的 list，会影响 a
+print(a)  # [1, [88, 3]]
+```
+
+#### 深拷贝
+
+作用：递归地拷贝对象及其所有子对象，直到最底层。
+结果：修改任何层级的拷贝对象，都不会影响原对象。
+
+```python
+import copy
+
+a = [1, [2, 3]]
+b = copy.deepcopy(a)
+
+b[1][0] = 88
+print(a)  # [1, [2, 3]]
+```
+
+用浅拷贝：如果对象比较浅，或你只需要一个顶层副本。
+用深拷贝：当你要完全隔离原对象与副本，避免任何嵌套结构被共享时。
+替代方案：对于简单结构（如只含列表/字典），可以考虑用 copy 方法（如 list.copy()、dict.copy()）或切片操作，这些通常比 copy 模块更快。
+
 ### Python 中的内存泄漏可能由哪些情况引起？如何定位？
+
+#### Python 内存泄漏的常见原因
+
+1. 循环引用未被回收
+   两个或多个对象互相引用，且其中包含 __del__ 析构方法，导致 GC 无法正确回收。
+
+```python
+class A:
+    def __init__(self):
+        self.b = None
+    def __del__(self):
+        pass
+
+class B:
+    def __init__(self):
+        self.a = None
+
+a = A()
+b = B()
+a.b = b
+b.a = a
+del a, b  # 并不会立即释放
+```
+
+2. 全局变量或缓存未释放
+   长期保存的全局字典、列表、LRU 缓存等不断增长。
+   例如：缓存未设置淘汰策略。
+3. C 扩展模块的内存管理错误
+   部分第三方库（如某些 C 扩展或 NumPy/Cython 模块）可能存在内存未释放的问题。
+   这种情况下 Python 自身 GC 无法感知。
+4. 线程、协程或资源未正确关闭
+   打开的文件、socket、数据库连接未关闭。
+   异步任务或守护线程未退出。
+5. 长生命周期容器保存无用对象
+   例如：日志队列、消息队列、事件监听器不断追加新元素但没有消费或清理。
+
+#### 内存泄漏的定位方法
+
+使用 tracemalloc（内置库）
+
 ### 如何减少 Python 中函数调用的开销？
+
+1. 内联逻辑而不是频繁调用小函数
+   Python 没有编译器级的 内联函数优化，每次调用函数都会有栈帧分配、参数绑定等开销。
+   如果某个函数非常短小（比如只做一次加法），且在性能热点循环中被频繁调用，可以把逻辑直接写在循环里，减少函数调用层数。
+
+
+2. 使用内建函数和 C 实现的库
+   Python 内建函数和标准库很多是用 C 实现的，执行速度远快于等价的 Python 代码。
+   尽量用 math、itertools、functools 等模块里的函数。
+
+```
+   sum(lst)   # 比手写 for 循环累加快很多
+```
+
+3. 避免不必要的闭包和动态绑定
+   闭包（closure）或使用 lambda 会带来额外的上下文捕获开销。
+   例如，把循环内的函数调用提升到循环外做绑定：
+
+```
+# 慢：每次循环都要做属性查找
+for x in data:
+    total += math.sqrt(x)
+
+# 快：把方法局部绑定，减少查找开销
+sqrt = math.sqrt
+for x in data:
+    total += sqrt(x)
+```
+
+4. 使用局部变量代替全局变量
+   Python 访问 局部变量比全局变量快，因为局部查找在固定数组里，全局要查字典。
+   在性能敏感代码中，把全局方法或常量复制到局部变量会快一些。
+
+5. 减少递归，改用循环
+   每次递归调用都要构造新的栈帧，开销较大。
+   如果可能，把递归改写为循环，能减少函数调用数量。
+
+
+6. 用 JIT / 编译优化工具
+   使用 PyPy（JIT 编译器）运行 Python 代码，可以显著降低函数调用开销。
+   对数值计算可用 Numba 或 Cython 编译，函数调用开销会接近 C 水平。
+
+
+7. 使用内联缓存（函数对象绑定）
+   如果函数是动态解析得到的（例如从对象属性里取出），提前绑定可以减少查找：
+
+```
+f = obj.method
+for i in range(n):
+    f()
+```
+
 ### list vs tuple 的性能与使用场景
+
+1. 可变性
+   list：可变（mutable），可以增删改元素。
+   tuple：不可变（immutable），一旦创建就不能修改内部元素。
+
+
+2. 性能对比
+   tuple 更快：因为不可变，不需要额外维护可变性带来的开销（比如动态扩展容量）。在迭代、访问等操作上，tuple 通常比 list 更快。
+   list 更灵活：支持增删改，底层实现为动态数组，能高效扩容，但在纯只读场景中性能略逊于 tuple。一般来说，tuple 的创建与访问速度要快一些。
+
+3. 内存占用
+   tuple 更省内存：因为不可变，不需要预留额外的空间。
+   list 会多占一点内存：为了支持 append/extend 等操作，list 在内部往往会多分配一些容量。
+
+4. 使用场景
+
+- 适合使用 list 的场景
+
+    - 数据需要频繁修改（增删元素）。
+    - 需要排序（tuple 无法直接排序）。
+    - 元素数量和内容不固定。
+
+- 适合使用 tuple 的场景
+
+    - 数据是固定的，只需要存储和遍历。
+    - 希望作为字典的键或集合的元素（必须可哈希）。
+    - 更注重性能和内存（如大规模只读数据）。
+
+5. 实战经验总结
+   如果你需要 动态容器 → 用 list。
+   如果你需要 只读数据结构/作为不可变标识 → 用 tuple。
+   对于小数据量，差别不大；对于大规模数据和频繁访问，tuple 的轻量和速度优势更明显。
+
 ### set、dict 的哈希实现与优化
+
 ### collections 模块（deque、Counter、defaultdict、OrderedDict）
+
 ### 内存优化
+
 ### 内存池机制（small object allocator）
+
 ### sys.intern、字符串驻留
+
 ### __slots__、生成器（generator）、迭代器的内存特性
+
 ### 性能调优
+
 ### 使用 timeit、cProfile、line_profiler 做性能分析
+
 ### C 扩展与 Cython 提升性能
+
 ### 内建函数与列表推导的性能差异
 
 ## 并发与异步
 
 ### Python 中 多进程 vs 多线程 vs 协程 的区别和适用场景。
+
 ### Python 的 multiprocessing 和 threading 模块差异。
+
 ### asyncio 的工作机制：事件循环、协程调度。
+
 ### 如何在 asyncio 中进行任务取消、超时处理？
+
 ### Python 中实现生产者消费者模型的几种方法。
+
 ### concurrent.futures 模块的使用。
+
 ### GIL 的影响与适用场景（IO 密集 vs CPU 密集）
+
 ### threading、concurrent.futures.ThreadPoolExecutor
+
 ### 多进程
+
 ### 进程间通信：Queue、Pipe、共享内存
+
 ### multiprocessing 与 joblib
+
 ### 协程与异步编程
+
 ### asyncio 原理：事件循环、任务调度
+
 ### await 与 async 的底层机制（协程对象、本质是生成器）
+
 ### Trio、Curio、gevent 与 asyncio 的对比
 
 ## 常用数据结构与算法
 
 ### Python 内置数据结构（list, dict, set, tuple）的底层实现原理。
+
 ### Python 字典在 3.6+ 后的 有序性是如何实现的？
+
 ### list 扩容机制与性能特点。
+
 ### 如何实现一个 LRU 缓存？（可用 functools.lru_cache 或自定义 OrderedDict）
+
 ### 实现一个线程安全的队列（Queue 原理）。
+
 ### 基础数据结构
+
 ### 栈、队列、堆、哈希表的 Python 实现
+
 ### Python 内置排序算法（Timsort）原理
+
 ### 高阶数据结构
+
 ### B 树、Trie、图的常见实现
+
 ### LRU/LFU 缓存（functools.lru_cache 实现）
+
 ### 算法与复杂度
+
 ### 常见算法复杂度分析（Big-O）
+
 ### 动态规划、回溯、贪心的 Python 实现
+
 ### 海量数据处理（分治、Bloom Filter、LRU Cache）
 
 ## 工程与架构
 
 ### Python 项目常见的目录结构与模块组织。
+
 ### Python 的 包管理：pip、Poetry、Conda 的区别。
+
 ### 如何在大型 Python 项目中做 依赖注入？
+
 ### 如何保证代码质量（lint、mypy、pytest、tox 等工具）。
+
 ### Python 项目的日志管理最佳实践。
+
 ### 单元测试与 Mock 的应用场景。
+
 ### CI/CD 中 Python 项目的常见自动化流程。
-  测试与调试
+
+测试与调试
+
 ### unittest、pytest、doctest
+
 ### mock 与 patch 技巧
+
 ### logging、traceback、pdb
+
 ### 代码质量与规范
+
 ### PEP8、typing（静态类型检查）
+
 ### mypy、pylint、flake8
+
 ### 框架与库
+
 ### Web 框架（Django、Flask、FastAPI）
+
 ### 科学计算（NumPy、Pandas、PyTorch）
+
 ### ORM 与数据库（SQLAlchemy、peewee、Django ORM）
+
 ### 架构设计
+
 ### 设计模式在 Python 中的应用（单例、工厂、观察者）
+
 ### 依赖注入与模块解耦
+
 ### 高并发架构与微服务中的 Python 角色
 
 ## 系统设计与场景题
 
 ### 如果让你实现一个 高并发爬虫系统，会怎么设计？
+
 ### 如何实现一个支持 百万级并发的 WebSocket 服务？
+
 ### Python 在 微服务架构中的角色与优化。
+
 ### 如何设计一个 大规模数据处理 pipeline？
+
 ### Python 在 消息队列系统（Kafka/RabbitMQ） 中的应用。
+
 ### 设计一个高并发爬虫（反爬应对、数据存储、异步请求）
+
 ### 设计一个分布式日志采集系统（Kafka + Python 消费）
+
 ### 如何实现一个限流器（令牌桶/漏桶）在 Python 中
+
 ### 如何优化一个大规模 ETL 任务（Pandas vs PySpark）
 
 ## 额外加分题
 
 ### C 扩展、Cython、Numba 的使用场景。
+
 ### Python 如何与 C/C++ 交互（ctypes、cffi、cython、pybind11）。
+
 ### PEP 484 类型注解与 mypy 的关系。
+
 ### Python 3.10+ 的新特性（如模式匹配 match）。
+
 ### Python 3.14+ 的新特性。
+
 ### Python 解释器（CPython、PyPy、Jython）的区别。
+
 ### CPython 的内存管理机制（引用计数、垃圾回收、GC Root）
 

@@ -769,55 +769,725 @@ for i in range(n):
    如果你需要 只读数据结构/作为不可变标识 → 用 tuple。
    对于小数据量，差别不大；对于大规模数据和频繁访问，tuple 的轻量和速度优势更明显。
 
+### list 扩容原理
+
+Python 的 list 本质是动态数组，扩容时会申请更大的一块内存并搬迁元素。为了避免频繁扩容，CPython 采用了 1.125 倍左右的按比例增长策略，因此 list.append() 平均复杂度是 O(1)。
+
 ### set、dict 的哈希实现与优化
+
+Python 中 set 和 dict 的哈希实现与优化。这两个容器在 CPython 中的底层实现几乎是一样的（哈希表/哈希映射），只是用途不同：
+dict：键值对映射（key → value）
+set：只存储键（实际上就是一个 dict，值统一是一个哨兵对象 Py_None）
+
+Python 使用 开放寻址法 来解决哈希冲突：
+元素通过 hash(key) 映射到哈希表的某个槽位（bucket/slot）。
+如果槽位已被占用，采用 探测（probing） 来寻找下一个可用槽。
+
+1. 初始位置：通过哈希函数计算得到关键字的初始位置。
+2. 冲突处理：如果该位置已经被占用，则根据某种探查规则依次查找下一个位置。
+3. 探查成功：找到一个空位置，把关键字存入。
+4. 查找和删除：查找时用同样的探查序列；删除时可能需要做特殊标记，以保证后续查找的正确性。
+
+线性探查（Linear Probing）
+冲突时依次检查下一个位置：
+Hi = (H(key) + i) mod m
+缺点是容易造成“聚集”现象（很多元素集中在连续位置）。
+
+Python 3.6+ 引入 key-value 分离和紧凑数组，提高内存和缓存效率。
+Python 3.7+ 保证了 插入顺序。
+set 是 dict 的子集优化版本。
 
 ### collections 模块（deque、Counter、defaultdict、OrderedDict）
 
-### 内存优化
-
 ### 内存池机制（small object allocator）
+
+Python 内存池机制（pymalloc）的核心是：
+• 小对象（<512B） 通过内存池机制（arena → pool → block）管理，减少碎片和系统调用。
+• 大对象（>=512B） 直接由系统分配。
+• 搭配引用计数和 GC 机制实现自动化内存回收。
+
+CPython 从 2.3 版本开始引入 pymalloc，主要优化了对“小对象”的内存分配。
+• 小对象：小于 512 字节的对象。
+• 大对象：大于等于 512 字节的对象，直接向系统申请。
+
+pymalloc 使用分层结构来减少碎片和系统调用：
+
+1. arena（竞技场）
+   • 大约 256 KB 的内存块，直接从操作系统申请。
+   • 一个 arena 会被划分为多个 pool。
+2. pool（池）
+   • 大小固定为 4 KB。
+   • 每个 pool 只存放同一大小类别的对象（如所有 16 字节对象）。
+   • 避免不同大小对象混用导致碎片。
+3. block（块）
+   • pool 内部分配给对象的最小单元。
+   • 比如一个 pool 可能被分成 256 个 16 字节的 block。
 
 ### sys.intern、字符串驻留
 
+#### 什么是字符串驻留 (String Interning)
+
+- 驻留（interning） 是一种优化技术：
+  将内容相同的不可变字符串只保留一份副本，避免重复存储和比较时的开销。
+- 在 Python 中，某些字符串会自动驻留：
+    - 短字符串（例如标识符风格的变量名、关键字、常见短字面量）。
+    - 只包含字母、数字、下划线的字符串（即标识符合法形式）。
+
+```
+a = "hello"
+b = "hello"
+print(a is b)  # True，Python 自动驻留
+```
+
+但不是所有字符串都会驻留，例如：
+
+```
+a = "hello world!"
+b = "hello world!"
+print(a is b)  # False，默认不驻留
+```
+
+#### sys.intern()
+
+sys.intern() 可以手动请求驻留某个字符串。
+如果已经存在内容相同的驻留字符串，就返回该对象；否则加入驻留池。
+
+```
+import sys
+
+a = sys.intern("hello world!")
+b = sys.intern("hello world!")
+print(a is b)  # True
+```
+
+- 不要滥用：驻留会让字符串常驻内存，可能导致内存占用增加。
+- 适合频繁重复的字符串，尤其是用于字典键、集合元素、或需要大量比较的字符串。
+- Python 内部已经自动驻留一部分字符串，不需要手动处理。
+
 ### __slots__、生成器（generator）、迭代器的内存特性
 
-### 性能调优
+#### __slots__ 的内存特性
 
-### 使用 timeit、cProfile、line_profiler 做性能分析
+- 默认情况：Python 的普通类实例会把属性存储在一个 __dict__ 中，__dict__ 是一个字典对象，会占用额外内存。
+- 使用 __slots__：
+    - 显式声明类中允许存在的属性名称；
+        - 不再为实例创建 __dict__（除非显式声明），从而减少内存开销；
+    - 每个属性在内部使用类似数组的结构存储，访问速度比字典稍快。
+- 适用场景：
+    - 大量创建小对象、属性固定时（如树节点、图节点等数据结构）。
+    - 节省内存，提升属性访问效率。
+
+👉 内存对比：一个普通对象（带 __dict__）可能消耗上百字节，而使用 __slots__ 可以节省 30~40% 的内存。
+
+#### 生成器（generator）的内存特性
+
+- 生成器的本质：是一种特殊的迭代器，通过 yield 按需生成数据。
+- 内存特性：
+    - 惰性计算：一次只在内存中保存当前状态（局部变量、指令指针），不会像列表那样一次性存储所有元素。
+    - 节省内存：即使要处理百万级数据，生成器本身只占用很小的空间。
+- 适用场景：
+    - 数据流（如读取大文件、网络数据流）；
+    - 大规模计算（如数值序列生成、组合生成）。
+
+👉 对比：
+
+- [i for i in range(10**6)] 会一次性在内存中保存 100 万个整数。
+- (i for i in range(10**6)) 生成器几乎不占额外空间，只保存一个生成器对象。
+
+#### 迭代器（iterator）的内存特性
+
+- 迭代器定义：实现了 __iter__() 和 __next__() 的对象。
+- 内存特性：
+    - 存储的是当前位置状态和生成下一个值的逻辑，而不是完整的数据集合；
+    - 通常比存储整个容器对象要轻量。
+- 区别于生成器：
+    - 迭代器是抽象协议，生成器是迭代器的一种具体实现（更简洁）；
+    - 你也可以自定义迭代器类来节省内存，比如从文件流中按需取数据。
 
 ### C 扩展与 Cython 提升性能
 
 ### 内建函数与列表推导的性能差异
 
-## 并发与异步
+- 需要聚合操作时，优先考虑 内建函数 + 迭代器，性能和内存占用最佳。
+- 如果只是做中间数据转换，列表推导式更直观。
+- 如果数据量特别大，避免列表推导式生成临时列表，改用 生成器表达式 或 map/filter。
 
 ### Python 中 多进程 vs 多线程 vs 协程 的区别和适用场景。
 
-### Python 的 multiprocessing 和 threading 模块差异。
+#### 多进程 (multiprocessing)
+
+原理
+
+- 每个进程都有独立的内存空间、全局解释器锁（GIL）各自独立，不会互相干扰。
+- 在多核 CPU 上可以真正实现 并行计算。
+- Python 提供 multiprocessing 模块来简化进程间的创建和通信。
+
+优点
+
+- 能充分利用多核 CPU，适合 CPU 密集型任务（如大规模计算、图像处理、机器学习训练）。
+- 稳定性高，一个进程崩溃不会影响其他进程。
+
+缺点
+
+- 进程切换和通信开销较大（需要序列化数据进行 IPC）。
+- 占用内存多。
+
+适用场景
+
+- CPU 密集型任务（例如矩阵运算、视频转码）。
+- 需要高容错和隔离性（例如 Web 服务器的 worker 进程模型）。
+
+#### 多线程 (multithreading)
+
+原理
+
+- 多个线程共享同一个进程的内存空间。
+- 但由于 GIL（全局解释器锁）的存在，在 CPython 解释器中，同一时刻只允许一个线程执行字节码。
+- Python 的 threading 模块提供了线程支持。
+
+优点
+
+- 线程切换比进程开销小。
+- 线程共享内存，通信方便。
+
+缺点
+
+- 受 GIL 限制，CPU 密集型任务无法真正并行，只能实现伪并行。
+- 线程安全问题复杂，需要锁机制，容易出现死锁。
+- 一个线程崩溃可能影响整个进程。
+
+适用场景
+
+- I/O 密集型任务（网络请求、文件读写、爬虫）。
+- 任务之间需要共享大量内存或数据。
+
+#### 协程 (asyncio / gevent 等)
+
+原理
+
+- 协程是一种用户态的“轻量级线程”，本质上是单线程下的并发。
+- 通过事件循环（event loop）和 async/await 语法来切换任务。
+- 切换点在 I/O 等待时，由程序显式交出控制权。
+
+优点
+
+- 不受 GIL 限制（因为本质是单线程），切换开销极小。
+- 内存占用少，可同时处理成千上万个 I/O 任务。
+- 代码结构清晰，比回调地狱（callback hell）更易读。
+
+缺点
+
+- 不能利用多核 CPU（需要配合多进程）。
+- 只适合 I/O 密集型，CPU 密集型不合适。
+- 第三方库必须支持异步（否则需要用线程池/进程池封装）。
+
+适用场景
+
+- 高并发 I/O 密集型应用（Web 服务器、爬虫、聊天系统）。
+- 网络编程（asyncio、aiohttp）。
 
 ### asyncio 的工作机制：事件循环、协程调度。
 
+#### 事件循环 (Event Loop)
+
+事件循环是 asyncio 的核心。它的作用是：
+
+1. 管理任务队列
+    - 任务（Task）通常是协程（Coroutine）的封装对象。
+    - 事件循环会维护一个“就绪队列”，里面放着等待执行或等待恢复执行的任务。
+2. 非阻塞 I/O 调度
+    - 事件循环会监听 I/O 事件（比如 socket、文件读写、网络请求）。
+    - 当某个 I/O 就绪时，会触发回调或恢复对应协程。
+3. 调度与切换
+    - 事件循环本身是一个无限循环 (while True)。
+    - 它不断从就绪队列中取出任务执行，直到任务主动 await 某个异步操作，或者任务完成。
+    - 当任务 await 某个 I/O 时，事件循环会挂起它，等 I/O 完成后再恢复。
+
+🔑 关键点：事件循环是单线程的（默认情况下），但它能并发地管理大量 I/O，因为在等待 I/O 时不阻塞主线程。
+
+#### 协程调度 (Coroutine Scheduling)
+
+协程调度依赖于 await 和 Task：
+
+1. 协程 (Coroutine)
+    - 使用 async def 定义的函数返回的是协程对象。
+    - 协程本身不会运行，必须交给事件循环调度。
+2. 调度原理
+    - 当你执行 await some_async_func()：
+        - 当前协程会挂起，控制权交还给事件循环。
+        - 事件循环会去执行其他就绪的任务。
+        - 当 some_async_func 完成时，事件循环会恢复挂起的协程。
+
+3. Task 封装
+    - 使用 asyncio.create_task(coro) 可以显式把协程封装成任务。
+    - 任务会被事件循环追踪并调度执行，哪怕你不再手动 await 它。
+
+```
+import asyncio
+
+async def foo():
+    print("start foo")
+    await asyncio.sleep(1)  # 模拟 I/O 操作
+    print("end foo")
+
+async def bar():
+    print("start bar")
+    await asyncio.sleep(2)
+    print("end bar")
+
+async def main():
+    # 并发运行 foo 和 bar
+    task1 = asyncio.create_task(foo())
+    task2 = asyncio.create_task(bar())
+    await task1
+    await task2
+
+asyncio.run(main())
+```
+
+#### 总结
+
+- 事件循环：大管家，负责调度、I/O 监听、任务恢复。
+- 协程调度：通过 await 挂起与恢复，事件循环决定哪个协程何时执行。
+- 并发原理：不是多线程，而是 单线程协作式调度，通过 I/O 多路复用和挂起/恢复实现高并发。
+
 ### 如何在 asyncio 中进行任务取消、超时处理？
+
+#### 任务取消 (Task Cancellation)
+
+在 asyncio 中，任务通常是通过 asyncio.create_task() 或 loop.create_task() 创建的。如果需要取消任务，可以调用其 .cancel() 方法：
+
+- 取消本质：调用 .cancel() 会向任务抛出 CancelledError 异常。
+- 需要处理：任务中最好捕获 CancelledError，用于清理资源。
+- 必须 await：即使取消了任务，也最好 await 一下它，确保异常被正确处理。
+
+```
+import asyncio
+
+async def worker():
+    try:
+        print("任务开始")
+        await asyncio.sleep(5)
+        print("任务完成")
+    except asyncio.CancelledError:
+        print("任务被取消！")
+        raise  # 可以选择重新抛出，通知上层任务
+
+async def main():
+    task = asyncio.create_task(worker())
+
+    await asyncio.sleep(2)  # 运行一会
+    task.cancel()  # 取消任务
+
+    try:
+        await task
+    except asyncio.CancelledError:
+        print("捕获到任务取消异常")
+
+asyncio.run(main())
+```
+
+#### 超时处理
+
+asyncio 提供了 asyncio.wait_for() 来给任务设定超时：
+
+```
+import asyncio
+
+async def long_task():
+    await asyncio.sleep(10)
+    return "完成"
+
+async def main():
+    try:
+        result = await asyncio.wait_for(long_task(), timeout=3)
+        print(result)
+    except asyncio.TimeoutError:
+        print("任务超时！")
+
+asyncio.run(main())
+```
+
+- asyncio.wait_for(coro, timeout) 会在超时后取消 coro 对应的任务。
+- 如果你不想取消原始任务，而只是想等到超时就放弃结果，可以用 asyncio.shield() 包裹：
+
+```
+async def main():
+    task = asyncio.create_task(long_task())
+
+    try:
+        result = await asyncio.wait_for(asyncio.shield(task), timeout=3)
+        print(result)
+    except asyncio.TimeoutError:
+        print("任务超时，但继续运行中...")
+        result = await task
+        print("最终结果：", result)
+```
+
+#### 组合取消与超时
+
+有时需要多个任务一起运行，如果一个任务失败或超时，需要取消其他任务：
+
+```
+async def worker(name, delay):
+    try:
+        await asyncio.sleep(delay)
+        print(f"{name} 完成")
+        return 'ok'
+    except asyncio.CancelledError:
+        print(f"{name} 被取消")
+        raise
+
+
+async def main():
+    tasks = [
+        asyncio.create_task(worker("任务1", 5)),
+        asyncio.create_task(worker("任务2", 10)),
+    ]
+    done, pending = await asyncio.wait(tasks, timeout=6)
+
+    for p in pending:
+        p.cancel()  # 取消未完成任务
+
+    res = await asyncio.gather(*tasks, return_exceptions=True)
+    print(res)
+
+
+asyncio.run(main())
+
+# 任务1 完成
+# 任务2 被取消
+# ['ok', CancelledError('')]
+```
 
 ### Python 中实现生产者消费者模型的几种方法。
 
+#### 使用 queue.Queue（推荐）
+
+Python 内置的 queue.Queue 提供了线程安全的 FIFO 队列，天然适合生产者-消费者模型。
+
+```
+import threading
+import queue
+import time
+
+q = queue.Queue(maxsize=10)
+
+def producer():
+    for i in range(20):
+        q.put(i)  # 放入队列
+        print(f"生产: {i}")
+        time.sleep(0.1)
+
+def consumer():
+    while True:
+        item = q.get()  # 从队列取出
+        print(f"消费: {item}")
+        q.task_done()   # 标记任务完成
+        time.sleep(0.2)
+
+# 启动线程
+t1 = threading.Thread(target=producer)
+t2 = threading.Thread(target=consumer, daemon=True)  # 守护线程
+t1.start(); t2.start()
+
+t1.join()
+q.join()  # 等待所有任务完成
+```
+
+#### 使用 multiprocessing.Queue
+
+当需要 多进程 并发时，使用 multiprocessing.Queue。
+
+```
+from multiprocessing import Process, Queue
+import time
+
+def producer(q):
+    for i in range(5):
+        q.put(i)
+        print(f"生产: {i}")
+        time.sleep(0.1)
+
+def consumer(q):
+    while True:
+        item = q.get()
+        print(f"消费: {item}")
+
+if __name__ == '__main__':
+    q = Queue()
+    p = Process(target=producer, args=(q,))
+    c = Process(target=consumer, args=(q,))
+    p.start(); c.start()
+    p.join(); c.terminate()
+```
+
+#### 使用 asyncio.Queue
+
+适用于 异步 I/O 场景（例如网络爬虫）。
+
+```
+import asyncio
+
+async def producer(queue):
+    for i in range(5):
+        await queue.put(i)
+        print(f"生产: {i}")
+        await asyncio.sleep(0.1)
+
+async def consumer(queue):
+    while True:
+        item = await queue.get()
+        print(f"消费: {item}")
+        await asyncio.sleep(0.2)
+
+async def main():
+    queue = asyncio.Queue()
+    await asyncio.gather(producer(queue), consumer(queue))
+
+asyncio.run(main())
+```
+
 ### concurrent.futures 模块的使用。
+
+concurrent.futures 是 Python 标准库中提供的并发执行模块，主要用来简化多线程和多进程的并发编程。它在 Python 3.2 引入，常用的类有：
+
+- ThreadPoolExecutor：基于线程池的并发执行。
+- ProcessPoolExecutor：基于进程池的并发执行。
+
+下面我给你一个系统性的说明和示例。
+
+#### 基本概念
+
+concurrent.futures 主要提供两种方式提交任务：
+
+- submit(fn, *args, **kwargs)：提交一个可调用对象，返回一个 Future 对象。
+- map(func, *iterables)：类似内置的 map，但会并发地执行。
+
+Future 对象：代表一个异步执行的操作，可以通过 result() 获取返回值，或 done() 判断是否完成。
+
+#### ThreadPoolExecutor 示例（适合 I/O 密集型任务）
+
+```
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+
+def task(n):
+    print(f"开始任务 {n}")
+    time.sleep(2)
+    return f"任务 {n} 完成"
+
+# 创建线程池
+with ThreadPoolExecutor(max_workers=3) as executor:
+    # 提交多个任务
+    futures = [executor.submit(task, i) for i in range(5)]
+    
+    # 等待结果完成
+    for future in as_completed(futures):
+        print(future.result())
+```
+
+#### ProcessPoolExecutor 示例（适合 CPU 密集型任务）
+
+```
+from concurrent.futures import ProcessPoolExecutor
+import math
+
+def cpu_task(n):
+    print(f"计算 {n} 的阶乘")
+    return math.factorial(n)
+
+with ProcessPoolExecutor(max_workers=4) as executor:
+    numbers = [100000, 120000, 150000, 200000]
+    results = list(executor.map(cpu_task, numbers))
+
+print(results[:2])  # 打印部分结果
+```
 
 ### GIL 的影响与适用场景（IO 密集 vs CPU 密集）
 
-### threading、concurrent.futures.ThreadPoolExecutor
-
-### 多进程
-
 ### 进程间通信：Queue、Pipe、共享内存
 
-### multiprocessing 与 joblib
+#### Queue（队列）
+
+- 本质：multiprocessing.Queue 是一个基于 管道 + 锁 的多生产者、多消费者队列，和 queue.Queue 类似，但适用于多进程环境。
+- 优点：支持多个进程安全读写，使用简单。
+- 缺点：由于数据需要序列化（pickle）后传输，对大数据对象性能可能较低。
+
+```
+from multiprocessing import Process, Queue
+
+def worker(q):
+    q.put("hello from child")
+
+if __name__ == "__main__":
+    q = Queue()
+    p = Process(target=worker, args=(q,))
+    p.start()
+    print(q.get())  # 从队列读取数据
+    p.join()
+```
+
+#### Pipe（管道）
+
+- 本质：multiprocessing.Pipe 提供一个 双端通信通道，返回两个连接对象（conn1、conn2）。
+- 特点：
+    - Pipe(duplex=True)：双向（默认）。
+    - Pipe(duplex=False)：单向。
+- 适用场景：点对点通信（两个进程之间）。
+- 缺点：只能在两个进程之间使用，多进程扩展性不如 Queue。
+
+```
+from multiprocessing import Process, Pipe
+
+def worker(conn):
+    conn.send("hello from child")
+    conn.close()
+
+if __name__ == "__main__":
+    parent_conn, child_conn = Pipe()
+    p = Process(target=worker, args=(child_conn,))
+    p.start()
+    print(parent_conn.recv())  # 接收数据
+    p.join()
+```
+
+#### 共享内存（Shared Memory）
+
+进程间默认 不共享内存（每个进程有独立的内存空间），但 multiprocessing 提供了几种共享方式：
+
+略
 
 ### 协程与异步编程
 
+#### 什么是协程（Coroutine）
+
+1. 基本概念
+    - 协程是比线程更轻量级的一种并发单位。
+    - 它的核心特点是：在单线程内通过挂起与恢复，实现多个任务的切换。
+    - 协程在 Python 中主要依赖 async/await 关键字实现。
+
+2. 特点
+    - 运行在单线程中，不依赖操作系统的线程调度。
+    - 使用 事件循环（event loop） 来调度任务。
+    - 通过 await 显式挂起，等待某个异步操作完成后再恢复运行。
+
+#### Python 异步编程
+
+1. 同步 vs 异步
+    - 同步：一个任务执行时，其它任务必须等待（阻塞 I/O 常见）。
+    - 异步：当某个任务等待 I/O 时，可以切换到其他任务，提高效率。
+
+```
+# 同步
+def read_file():
+    with open("data.txt") as f:
+        return f.read()
+```
+
+在同步模式下，文件读取完成之前，程序无法去做别的事情。
+
+而异步方式：
+
+```
+import asyncio
+
+async def read_file():
+    await asyncio.sleep(1)  # 模拟I/O操作
+    return "file content"
+```
+
+这里 await asyncio.sleep(1) 表示协程会“让出控制权”，在等待期间事件循环可以去执行其他任务。
+
+2. Python 中的异步支持
+    - asyncio 标准库：Python 3.4 引入，3.5+ 用 async/await 语法。
+    - 关键组件：
+    - 事件循环（Event Loop）：负责调度与执行任务。
+    - 协程（Coroutine）：使用 async def 定义的函数。
+    - 任务（Task）：由事件循环管理的协程包装对象。
+    - Future：表示一个异步操作的结果。
+
+```
+import asyncio
+
+async def task1():
+    print("开始任务1")
+    await asyncio.sleep(2)
+    print("完成任务1")
+
+async def task2():
+    print("开始任务2")
+    await asyncio.sleep(1)
+    print("完成任务2")
+
+async def main():
+    # 并发运行两个任务
+    await asyncio.gather(task1(), task2())
+
+asyncio.run(main())
+```
+
+#### 应用场景
+
+- 网络编程（如：高并发 Web 服务器、爬虫）
+- 数据库异步操作（如：aiomysql, asyncpg）
+- 高并发 I/O 请求（如：成千上万的 HTTP 请求）
+
+典型应用框架：
+
+- Web 框架：FastAPI、Sanic、aiohttp
+- 爬虫框架：Scrapy（部分支持 asyncio）
+
+### 为什么说Python没有真正的多线程
+Python 里“没有真正的多线程”指的是在 CPython + CPU 密集型任务 的场景下，多线程无法真正并行。
+但对于 I/O 密集型任务，多线程仍然是非常有用的工具。
+
 ### asyncio 原理：事件循环、任务调度
+#### 事件循环（Event Loop）
+核心概念
+•	事件循环是 asyncio 的心脏，它不断运行，监听并调度不同的异步任务和 I/O 事件。
+•	在 Python 中，通常用 asyncio.run() 启动事件循环，事件循环会一直运行直到所有任务完成或被取消。
+
+工作流程
+1.	初始化循环：创建一个 EventLoop 对象。
+2.	注册任务：通过 create_task() 或 ensure_future() 将 coroutine（协程对象）包装成 Task 并交给循环。
+3.	等待 I/O：循环通过操作系统提供的 I/O 多路复用机制（如 epoll, kqueue, select）监听文件描述符。
+4.	任务回调：一旦某个 I/O 就绪，事件循环唤醒相应的协程继续执行。
+5.	重复调度：循环不断检查是否有待执行的回调、任务和 I/O 事件，直到没有任务。
+#### 任务调度（Task Scheduling）
+
+协程与任务
+•	协程（Coroutine）：使用 async def 定义的函数，调用时返回一个协程对象。
+•	任务（Task）：事件循环对协程的进一步封装，用于调度和跟踪执行状态。
+
+调度机制
+1.	任务挂起：协程执行 await 时会挂起，把控制权交还给事件循环。
+2.	事件循环登记：事件循环记录下这个协程当前等待的 I/O 或 Future。
+3.	I/O 就绪：当 I/O 完成时，事件循环将协程放回 就绪队列。
+4.	恢复执行：事件循环重新调度该任务，从挂起的地方继续运行。
+
+时间调度
+
+事件循环除了处理 I/O，还可以管理 定时任务：
+•	通过 loop.call_later() 或 asyncio.sleep() 注册。
+•	事件循环会维护一个小顶堆，按时间顺序调度这些定时回调。
+
 
 ### await 与 async 的底层机制（协程对象、本质是生成器）
+#### 协程对象的本质 
+在 Python 中，使用 async def 定义的函数不会立即执行，而是会返回一个 协程对象（coroutine object）。
+```
+async def foo():
+    return 42
+
+coro = foo()
+print(coro)  # <coroutine object foo at 0x...>
+```
+这里的 coro 就是协程对象，它本质上是一个 特殊的生成器对象，实现了协程协议（PEP 492），可以被调度器（如 asyncio 事件循环）驱动执行。
+
+
+#### 协程与生成器的关系
+
 
 ### Trio、Curio、gevent 与 asyncio 的对比
 

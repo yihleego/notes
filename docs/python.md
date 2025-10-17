@@ -1439,43 +1439,51 @@ asyncio.run(main())
 - 爬虫框架：Scrapy（部分支持 asyncio）
 
 ### 为什么说Python没有真正的多线程
+
 Python 里“没有真正的多线程”指的是在 CPython + CPU 密集型任务 的场景下，多线程无法真正并行。
 但对于 I/O 密集型任务，多线程仍然是非常有用的工具。
 
 ### asyncio 原理：事件循环、任务调度
+
 #### 事件循环（Event Loop）
+
 核心概念
-•	事件循环是 asyncio 的心脏，它不断运行，监听并调度不同的异步任务和 I/O 事件。
-•	在 Python 中，通常用 asyncio.run() 启动事件循环，事件循环会一直运行直到所有任务完成或被取消。
+• 事件循环是 asyncio 的心脏，它不断运行，监听并调度不同的异步任务和 I/O 事件。
+• 在 Python 中，通常用 asyncio.run() 启动事件循环，事件循环会一直运行直到所有任务完成或被取消。
 
 工作流程
-1.	初始化循环：创建一个 EventLoop 对象。
-2.	注册任务：通过 create_task() 或 ensure_future() 将 coroutine（协程对象）包装成 Task 并交给循环。
-3.	等待 I/O：循环通过操作系统提供的 I/O 多路复用机制（如 epoll, kqueue, select）监听文件描述符。
-4.	任务回调：一旦某个 I/O 就绪，事件循环唤醒相应的协程继续执行。
-5.	重复调度：循环不断检查是否有待执行的回调、任务和 I/O 事件，直到没有任务。
+
+1. 初始化循环：创建一个 EventLoop 对象。
+2. 注册任务：通过 create_task() 或 ensure_future() 将 coroutine（协程对象）包装成 Task 并交给循环。
+3. 等待 I/O：循环通过操作系统提供的 I/O 多路复用机制（如 epoll, kqueue, select）监听文件描述符。
+4. 任务回调：一旦某个 I/O 就绪，事件循环唤醒相应的协程继续执行。
+5. 重复调度：循环不断检查是否有待执行的回调、任务和 I/O 事件，直到没有任务。
+
 #### 任务调度（Task Scheduling）
 
 协程与任务
-•	协程（Coroutine）：使用 async def 定义的函数，调用时返回一个协程对象。
-•	任务（Task）：事件循环对协程的进一步封装，用于调度和跟踪执行状态。
+• 协程（Coroutine）：使用 async def 定义的函数，调用时返回一个协程对象。
+• 任务（Task）：事件循环对协程的进一步封装，用于调度和跟踪执行状态。
 
 调度机制
-1.	任务挂起：协程执行 await 时会挂起，把控制权交还给事件循环。
-2.	事件循环登记：事件循环记录下这个协程当前等待的 I/O 或 Future。
-3.	I/O 就绪：当 I/O 完成时，事件循环将协程放回 就绪队列。
-4.	恢复执行：事件循环重新调度该任务，从挂起的地方继续运行。
+
+1. 任务挂起：协程执行 await 时会挂起，把控制权交还给事件循环。
+2. 事件循环登记：事件循环记录下这个协程当前等待的 I/O 或 Future。
+3. I/O 就绪：当 I/O 完成时，事件循环将协程放回 就绪队列。
+4. 恢复执行：事件循环重新调度该任务，从挂起的地方继续运行。
 
 时间调度
 
 事件循环除了处理 I/O，还可以管理 定时任务：
-•	通过 loop.call_later() 或 asyncio.sleep() 注册。
-•	事件循环会维护一个小顶堆，按时间顺序调度这些定时回调。
-
+• 通过 loop.call_later() 或 asyncio.sleep() 注册。
+• 事件循环会维护一个小顶堆，按时间顺序调度这些定时回调。
 
 ### await 与 async 的底层机制（协程对象、本质是生成器）
-#### 协程对象的本质 
+
+#### 协程对象的本质
+
 在 Python 中，使用 async def 定义的函数不会立即执行，而是会返回一个 协程对象（coroutine object）。
+
 ```
 async def foo():
     return 42
@@ -1483,13 +1491,91 @@ async def foo():
 coro = foo()
 print(coro)  # <coroutine object foo at 0x...>
 ```
-这里的 coro 就是协程对象，它本质上是一个 特殊的生成器对象，实现了协程协议（PEP 492），可以被调度器（如 asyncio 事件循环）驱动执行。
 
+这里的 coro 就是协程对象，它本质上是一个 特殊的生成器对象，实现了协程协议（PEP 492），可以被调度器（如 asyncio 事件循环）驱动执行。
 
 #### 协程与生成器的关系
 
+在 Python 3.5 引入 async / await 之前，协程是通过 生成器 和 yield from 来实现的：
+
+```
+def old_style_coroutine():
+    yield from some_generator()
+```
+
+从 3.5 开始，async def 定义的函数底层仍然是类似生成器的对象，但有一些区别：
+
+普通生成器函数：执行后返回 generator 对象。
+
+协程函数 (async def)：执行后返回 coroutine 对象。
+
+二者底层在 C 实现里共享了类似的机制（gen_send_ex），但 coroutine 对象多了一些状态字段，用来标记它是否是通过 async def 定义的，以及是否能 await。
+
+#### await 的底层机制
+
+await 并不是“语法糖”，它本质上是调用对象的 __await__ 方法。
+
+流程如下：
+
+当执行 await x 时，Python 会调用 iter(x.__await__())。
+
+__await__ 必须返回一个迭代器（通常是生成器对象）。
+
+调度器（如 asyncio 的 event loop）会不断驱动这个迭代器运行，直到抛出 StopIteration，返回最终值。
+
+```
+class Awaitable:
+    def __await__(self):
+        yield 42
+        return "done"
+
+async def main():
+    result = await Awaitable()
+    print(result)
+
+# main() -> coroutine, 交给 asyncio.run(main()) 才会真正运行
+```
+
+这段代码中：
+
+await Awaitable() 调用的是 Awaitable.__await__。
+
+事件循环通过 send / throw 驱动迭代器。
+
+最终捕获 StopIteration 并取出返回值 "done"。
+
+#### 事件循环与调度
+
+协程对象不会自己运行，它需要一个调度器驱动。
+在 asyncio 中，loop.run_until_complete(coro) 会：
+
+创建一个 Task，包装协程对象。
+
+将 Task 放入事件循环中。
+
+事件循环通过 send() 驱动协程对象运行，遇到 await 时挂起，等待子协程/IO 完成，再恢复执行。
+
+#### 总结
+
+async def 定义的函数返回 协程对象，本质类似生成器。
+
+await 调用目标对象的 __await__，返回一个迭代器，由调度器驱动。
+
+底层运行逻辑依赖生成器协议（send / throw / StopIteration）。
+
+asyncio 提供事件循环，负责调度和恢复协程。
 
 ### Trio、Curio、gevent 与 asyncio 的对比
+
+总的来说，选择哪一个库取决于你的需求：
+
+如果你更看重代码简洁和直观，且需要易于调试和错误处理，Trio 是一个不错的选择。
+
+如果你追求高效、现代的异步编程，并且想要少量的外部依赖，Curio 会很合适。
+
+如果你有大量的传统阻塞代码，并且希望通过异步化提升性能，gevent 是最合适的。
+
+如果你需要一个社区成熟、支持广泛的异步库，尤其是在与其他异步库兼容时，asyncio 是最普遍的选择。
 
 ## 常用数据结构与算法
 

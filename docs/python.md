@@ -68,7 +68,7 @@ dfs_recursive(graph, 'A')
 
 BFS
 
-```
+```python
 from collections import deque
 
 def bfs(graph, start):
@@ -547,7 +547,7 @@ except ZeroDivisionError:
 - ValueError.__context__ → ZeroDivisionError
 - traceback 会显示类似：
 
-```
+```python
 During handling of the above exception, another exception occurred:
 ```
 
@@ -555,7 +555,7 @@ During handling of the above exception, another exception occurred:
     - 可以通过 raise ... from ... 语法手动指定“直接原因”。
     - 当显式使用 from 时，新的异常对象的 __cause__ 属性会被设置为你指定的异常，而不是默认的 __context__。
 
-```
+```python
 try:
     1 / 0
 except ZeroDivisionError as e:
@@ -565,7 +565,7 @@ except ZeroDivisionError as e:
 - ValueError.__cause__ → ZeroDivisionError
 - traceback 会显示类似：
 
-```
+```python
 The above exception was the direct cause of the following exception:
 ```
 
@@ -693,7 +693,7 @@ del a, b  # 并不会立即释放
    Python 内建函数和标准库很多是用 C 实现的，执行速度远快于等价的 Python 代码。
    尽量用 math、itertools、functools 等模块里的函数。
 
-```
+```python
    sum(lst)   # 比手写 for 循环累加快很多
 ```
 
@@ -701,7 +701,7 @@ del a, b  # 并不会立即释放
    闭包（closure）或使用 lambda 会带来额外的上下文捕获开销。
    例如，把循环内的函数调用提升到循环外做绑定：
 
-```
+```python
 # 慢：每次循环都要做属性查找
 for x in data:
     total += math.sqrt(x)
@@ -729,7 +729,7 @@ for x in data:
 7. 使用内联缓存（函数对象绑定）
    如果函数是动态解析得到的（例如从对象属性里取出），提前绑定可以减少查找：
 
-```
+```python
 f = obj.method
 for i in range(n):
     f()
@@ -833,7 +833,7 @@ pymalloc 使用分层结构来减少碎片和系统调用：
     - 短字符串（例如标识符风格的变量名、关键字、常见短字面量）。
     - 只包含字母、数字、下划线的字符串（即标识符合法形式）。
 
-```
+```python
 a = "hello"
 b = "hello"
 print(a is b)  # True，Python 自动驻留
@@ -841,7 +841,7 @@ print(a is b)  # True，Python 自动驻留
 
 但不是所有字符串都会驻留，例如：
 
-```
+```python
 a = "hello world!"
 b = "hello world!"
 print(a is b)  # False，默认不驻留
@@ -852,7 +852,7 @@ print(a is b)  # False，默认不驻留
 sys.intern() 可以手动请求驻留某个字符串。
 如果已经存在内容相同的驻留字符串，就返回该对象；否则加入驻留池。
 
-```
+```python
 import sys
 
 a = sys.intern("hello world!")
@@ -1022,7 +1022,7 @@ print(a is b)  # True
     - 使用 asyncio.create_task(coro) 可以显式把协程封装成任务。
     - 任务会被事件循环追踪并调度执行，哪怕你不再手动 await 它。
 
-```
+```python
 import asyncio
 
 async def foo():
@@ -1061,7 +1061,7 @@ asyncio.run(main())
 - 需要处理：任务中最好捕获 CancelledError，用于清理资源。
 - 必须 await：即使取消了任务，也最好 await 一下它，确保异常被正确处理。
 
-```
+```python
 import asyncio
 
 async def worker():
@@ -1091,7 +1091,7 @@ asyncio.run(main())
 
 asyncio 提供了 asyncio.wait_for() 来给任务设定超时：
 
-```
+```python
 import asyncio
 
 async def long_task():
@@ -1111,7 +1111,7 @@ asyncio.run(main())
 - asyncio.wait_for(coro, timeout) 会在超时后取消 coro 对应的任务。
 - 如果你不想取消原始任务，而只是想等到超时就放弃结果，可以用 asyncio.shield() 包裹：
 
-```
+```python
 async def main():
     task = asyncio.create_task(long_task())
 
@@ -1128,7 +1128,7 @@ async def main():
 
 有时需要多个任务一起运行，如果一个任务失败或超时，需要取消其他任务：
 
-```
+```python
 async def worker(name, delay):
     try:
         await asyncio.sleep(delay)
@@ -1166,7 +1166,7 @@ asyncio.run(main())
 
 Python 内置的 queue.Queue 提供了线程安全的 FIFO 队列，天然适合生产者-消费者模型。
 
-```
+```python
 import threading
 import queue
 import time
@@ -1199,7 +1199,7 @@ q.join()  # 等待所有任务完成
 
 当需要 多进程 并发时，使用 multiprocessing.Queue。
 
-```
+```python
 from multiprocessing import Process, Queue
 import time
 
@@ -1226,7 +1226,7 @@ if __name__ == '__main__':
 
 适用于 异步 I/O 场景（例如网络爬虫）。
 
-```
+```python
 import asyncio
 
 async def producer(queue):
@@ -1268,7 +1268,7 @@ Future 对象：代表一个异步执行的操作，可以通过 result() 获取
 
 #### ThreadPoolExecutor 示例（适合 I/O 密集型任务）
 
-```
+```python
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 
@@ -1289,7 +1289,7 @@ with ThreadPoolExecutor(max_workers=3) as executor:
 
 #### ProcessPoolExecutor 示例（适合 CPU 密集型任务）
 
-```
+```python
 from concurrent.futures import ProcessPoolExecutor
 import math
 
@@ -1314,7 +1314,7 @@ print(results[:2])  # 打印部分结果
 - 优点：支持多个进程安全读写，使用简单。
 - 缺点：由于数据需要序列化（pickle）后传输，对大数据对象性能可能较低。
 
-```
+```python
 from multiprocessing import Process, Queue
 
 def worker(q):
@@ -1337,7 +1337,7 @@ if __name__ == "__main__":
 - 适用场景：点对点通信（两个进程之间）。
 - 缺点：只能在两个进程之间使用，多进程扩展性不如 Queue。
 
-```
+```python
 from multiprocessing import Process, Pipe
 
 def worker(conn):
@@ -1378,7 +1378,7 @@ if __name__ == "__main__":
     - 同步：一个任务执行时，其它任务必须等待（阻塞 I/O 常见）。
     - 异步：当某个任务等待 I/O 时，可以切换到其他任务，提高效率。
 
-```
+```python
 # 同步
 def read_file():
     with open("data.txt") as f:
@@ -1389,7 +1389,7 @@ def read_file():
 
 而异步方式：
 
-```
+```python
 import asyncio
 
 async def read_file():
@@ -1407,7 +1407,7 @@ async def read_file():
     - 任务（Task）：由事件循环管理的协程包装对象。
     - Future：表示一个异步操作的结果。
 
-```
+```python
 import asyncio
 
 async def task1():
@@ -1484,7 +1484,7 @@ Python 里“没有真正的多线程”指的是在 CPython + CPU 密集型任�
 
 在 Python 中，使用 async def 定义的函数不会立即执行，而是会返回一个 协程对象（coroutine object）。
 
-```
+```python
 async def foo():
     return 42
 
@@ -1498,7 +1498,7 @@ print(coro)  # <coroutine object foo at 0x...>
 
 在 Python 3.5 引入 async / await 之前，协程是通过 生成器 和 yield from 来实现的：
 
-```
+```python
 def old_style_coroutine():
     yield from some_generator()
 ```
@@ -1523,7 +1523,7 @@ __await__ 必须返回一个迭代器（通常是生成器对象）。
 
 调度器（如 asyncio 的 event loop）会不断驱动这个迭代器运行，直到抛出 StopIteration，返回最终值。
 
-```
+```python
 class Awaitable:
     def __await__(self):
         yield 42
@@ -1583,9 +1583,52 @@ asyncio 提供事件循环，负责调度和恢复协程。
 
 ### Python 字典在 3.6+ 后的 有序性是如何实现的？
 
+CPython 的 dict 是通过 两个并行数组 来实现的：
+
+索引表（index table）
+
+是一个哈希表，用于快速查找键。
+
+存储的是指向“entry”的索引。
+
+插入顺序数组（entries array）
+
+存储了实际的 (key, value, hash) 元组。
+
+元素顺序就是插入顺序。
+
+当你遍历字典时，实际上是按这个数组的顺序遍历的。
+
+这种设计同时实现了：
+
+查找的哈希表性能；
+
+保留插入顺序的可预测性。
+![python_dict.png](images/python_dict.png)
+
 ### list 扩容机制与性能特点。
 
 ### 如何实现一个 LRU 缓存？（可用 functools.lru_cache 或自定义 OrderedDict）
+
+Python 内置的 functools.lru_cache 就是一个 LRU 缓存实现。
+它基于装饰器使用，自动缓存最近调用的函数结果。
+
+```python
+from functools import lru_cache
+
+@lru_cache(maxsize=3)  # 最多缓存3个结果
+def get_data(n):
+    print(f"计算 {n}...")
+    return n * n
+
+# 测试
+print(get_data(2))  # 计算并缓存
+print(get_data(3))  # 计算并缓存
+print(get_data(4))  # 计算并缓存
+print(get_data(2))  # 直接命中缓存
+print(get_data(5))  # 超出容量，会淘汰最久未使用的（3）
+
+```
 
 ### 实现一个线程安全的队列（Queue 原理）。
 
@@ -1600,6 +1643,10 @@ asyncio 提供事件循环，负责调度和恢复协程。
 ### B 树、Trie、图的常见实现
 
 ### LRU/LFU 缓存（functools.lru_cache 实现）
+
+LRU (Least Recently Used)
+
+LFU (Least Frequently Used)
 
 ### 算法与复杂度
 

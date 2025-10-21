@@ -1084,13 +1084,67 @@ async def rate_limit_middleware(request: Request, call_next):
 
 ### 在多租户系统中，如何保证 用户隔离与权限控制？
 
-#### 租户
+#### 在 Session 层统一设置 “租户过滤器”
 
-ORM自动根据当前登录用户获取租户ID，自动拼接到SQL中
+SQLAlchemy 提供了 事件 (events) 和 查询拦截器 (query hooks)，可以在 session 里自动追加条件。
 
-#### 数据权限
+使用 with_loader_criteria
 
-pass
+SQLAlchemy 1.4+ 提供了一个非常适合多租户的 API：with_loader_criteria。
+它允许你为某个模型定义 全局过滤条件。
+
+```python
+from sqlalchemy.orm import with_loader_criteria
+from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import Depends, Request
+
+async def get_db(request: Request) -> AsyncSession:
+    tenant_id = request.state.tenant_id  # 假设你在中间件里放了 tenant_id
+    async with AsyncSessionLocal() as session:
+        # 给所有查询 User / Order 等表，自动加上 tenant_id = 当前用户租户
+        session = session.execution_options(
+            loader_criteria=[
+                with_loader_criteria(User, lambda cls: cls.tenant_id == tenant_id, include_aliases=True),
+                with_loader_criteria(Order, lambda cls: cls.tenant_id == tenant_id, include_aliases=True),
+            ]
+        )
+        yield session
+
+result = await db.execute(select(User))
+
+# SQLAlchemy 实际会生成：
+# SELECT * FROM users WHERE tenant_id = :tenant_id
+```
+
+你不需要手动 .filter(User.tenant_id == tenant_id) 了。
+
+#### 使用 Query 子类 / Mixin
+
+你可以定义一个 TenantMixin，所有模型都继承它：
+
+```python
+from sqlalchemy import Column, Integer
+
+class TenantMixin:
+    tenant_id = Column(Integer, index=True)
+```
+
+然后 User / Order 等表继承它。
+在 Query 层，重写 get 或者 filter_by，自动追加 tenant 条件。
+但这种方式在 async SQLAlchemy 下比较麻烦（因为 AsyncSession 没有 Query API，都是用 select）。
+
+所以 推荐方式还是用 with_loader_criteria。
+
+#### 在 FastAPI 中获取租户信息
+
+通常你会有一个 Auth Middleware 或者 Depends(get_current_user)，把 tenant_id 放到 request.state 或者返回的 User 对象里：
+
+```python
+from fastapi import Depends, Request
+
+async def get_tenant_id(request: Request) -> int:
+    return request.state.tenant_id
+```
 
 ### 如何为 FastAPI 应用编写 单元测试 / 集成测试？常用工具有哪些（pytest, unittest）？
 
@@ -1427,3 +1481,514 @@ spec:
 - 如果应用是异步的，也可以用 async def 定义健康检查路由。
 
 ## SQLAlchemy
+
+### 请解释 SQLAlchemy 的 Core 和 ORM 模块之间的区别。
+
+#### 概念层面
+
+- SQLAlchemy Core
+  是一个底层的 SQL 抽象层。它提供了与数据库交互的“表达式语言（Expression Language）”和“引擎/连接池（Engine/Connection Pool）”，让开发者能以接近 SQL 的方式来构造和执行查询。
+    - 更接近 SQL 本身
+    - 提供灵活的语法来生成 SQL 语句
+    - 注重性能和透明度
+- SQLAlchemy ORM（Object Relational Mapper）
+  构建在 Core 之上，提供了面向对象的编程接口。开发者可以将数据库表映射为 Python 类，将行映射为对象，从而以对象的形式来操作数据。
+    - 隐藏了 SQL 的细节
+    - 使用 Python 类和对象来读写数据库
+    - 提供会话（Session）机制来管理对象的持久化
+
+#### 使用方式上的区别
+
+Core 的使用示例：
+
+```python
+from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String
+
+engine = create_engine("sqlite:///:memory:")
+metadata = MetaData()
+
+users = Table(
+    "users", metadata,
+    Column("id", Integer, primary_key=True),
+    Column("name", String),
+)
+metadata.create_all(engine)
+
+# 插入数据
+with engine.connect() as conn:
+    conn.execute(users.insert().values(name="Alice"))
+    result = conn.execute(users.select())
+    for row in result:
+        print(row)
+```
+
+ORM 的使用示例：
+
+```python
+from sqlalchemy import create_engine, Column, Integer, String
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+
+engine = create_engine("sqlite:///:memory:")
+Base = declarative_base()
+
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True)
+    name = Column(String)
+
+Base.metadata.create_all(engine)
+
+Session = sessionmaker(bind=engine)
+session = Session()
+
+# 插入数据
+user = User(name="Alice")
+session.add(user)
+session.commit()
+
+for u in session.query(User).all():
+    print(u.id, u.name)
+```
+
+#### 适用场景
+
+- Core 更适合：
+    - 需要完全控制 SQL 的生成和执行
+    - 对性能有严格要求
+    - 构建通用的数据库工具或库
+    - 数据库模式复杂且 ORM 映射不方便
+- ORM 更适合：
+    - 业务逻辑以对象为中心
+    - 需要快速开发
+    - 团队对 SQL 不够熟悉，更倾向于用 Python 对象操作数据库
+    - 更关注代码的可维护性和可读性
+
+### 在 ORM 模型中，declarative_base() 的作用是什么？
+
+在 SQLAlchemy ORM 中，declarative_base() 的作用是用来创建一个 基类（Base class），所有 ORM 映射的模型类都需要继承它，从而具备与数据库表映射的功能。
+
+1. 基本作用
+    - declarative_base() 会返回一个 基础类，通常命名为 Base。
+    - ORM 模型类（比如 User、Post 等）继承这个 Base 后，就可以通过类属性定义表结构，并让 SQLAlchemy 知道这是一个映射类。
+    - 同时，Base 内部维护了一个 元数据对象（MetaData），保存所有模型对应的表结构信息，后续可以用来创建、删除表。
+
+2. 使用示例
+
+```python
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import Column, Integer, String
+
+# 创建基类
+Base = declarative_base()
+
+# 定义一个模型类，映射到数据库表
+class User(Base):
+    __tablename__ = "users"  # 指定表名
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String)
+    email = Column(String) 
+```
+
+在这个例子中：
+
+- User 继承了 Base，因此被 SQLAlchemy 识别为 ORM 模型。
+- __tablename__ 用来指定数据库表名。
+- Column 定义字段及其类型。
+
+3. 与 Base.metadata 的关系
+   Base.metadata 会收集所有继承自 Base 的模型的表定义。
+
+```python
+from sqlalchemy import create_engine
+
+engine = create_engine("sqlite:///example.db")
+Base.metadata.create_all(engine)  # 一次性创建所有表 
+```
+
+### 为什么 SQLAlchemy 不直接给你一个固定的 Base 类，而是要求你自己调用 declarative_base() 去生成一个？
+
+1. 每个项目需要独立的 Base
+    - declarative_base() 会生成一个新的 类工厂（class factory），即一个新的 Base。
+    - 不同的项目/模块可以各自拥有独立的 Base，这样它们的模型类互不干扰。
+    - 特别是在一个大型项目或库中，可能会有不同的数据库连接、不同的元数据集合，这时就需要多套独立的 Base 来分别管理。
+
+   如果 SQLAlchemy 内部直接提供一个全局的 Base，那么所有人的模型都会混在一起，无法隔离。
+
+2. 绑定不同的 MetaData
+    - 每个 Base 内部会持有一个 MetaData 对象，用于追踪它的所有表。
+    - 通过 declarative_base() 生成的 Base 可以绑定到不同的 MetaData，从而灵活管理数据库 schema。
+
+```python
+from sqlalchemy import MetaData
+from sqlalchemy.orm import declarative_base
+
+# 默认 metadata
+Base1 = declarative_base()
+
+# 使用自定义 metadata
+custom_metadata = MetaData(schema="my_schema")
+Base2 = declarative_base(metadata=custom_metadata) 
+```
+
+这样，Base1 和 Base2 的模型表就会分别存放在不同的 metadata 里，可以服务于不同的数据库或 schema。
+
+3. 避免全局单例的副作用
+    - 如果 SQLAlchemy 提供了一个固定的 Base，所有用户代码都会共享同一个 MetaData。
+    - 这会带来副作用：一个库（package）里定义的模型会污染到另一个库，因为它们都在同一个 metadata 里。
+    - 通过 declarative_base()，每个应用或库都可以生成自己的“命名空间”，实现模块化、解耦。
+
+4. 可扩展性
+   调用 declarative_base() 时，你还可以传入参数去定制生成的 Base，例如指定自定义的 cls 作为基类，从而扩展功能：
+
+```python
+class MyBase:
+    def as_dict(self):
+        return {c.name: getattr(self, c.name) for c in self.__table__.columns}
+
+Base = declarative_base(cls=MyBase)
+
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True)
+    name = Column(String)
+
+u = User(id=1, name="Alice")
+print(u.as_dict())  # {'id': 1, 'name': 'Alice'}
+```
+
+### SQLAlchemy 中的 Session 是如何工作的？为什么它被称为“工作单元（Unit of Work）”？
+
+1. Session 的核心作用
+
+- 对象缓存（Identity Map）
+  Session 会维护一个 identity map（对象标识映射），保证同一个数据库行在同一个 Session 生命周期中只对应一个 Python 对象实例。这避免了重复加载同一行数据，也确保对象的唯一性。
+- 事务边界
+  Session 通常绑定到一个数据库事务上。你通过 session.begin() 或在上下文管理器中使用 with Session() as session: 来控制事务的开始和结束。
+    - 提交时（commit()）：会将所有已变更的对象同步到数据库。
+    - 回滚时（rollback()）：会丢弃未提交的更改，保持数据库一致性。
+- 脏检查（Dirty Checking）
+  Session 会追踪对象的状态（new、dirty、deleted、persistent 等）。当你修改了对象的属性，Session 会自动记录下来，在 flush() 时生成相应的 SQL 语句。
+
+2. 为什么是 “工作单元（Unit of Work）”
+
+“工作单元” 是领域驱动设计（DDD）和企业应用架构（EAA）里的一个概念，主要思想是：
+
+- 把一系列对对象的修改（新增、更新、删除）当作一个 整体操作单元 来处理。
+- 在提交时，一次性生成 SQL 语句，并确保这些语句要么全部成功，要么全部失败（事务保证）。
+- 这样可以避免中间状态对数据库造成污染。
+
+在 SQLAlchemy 中，Session 就是这样一个 工作单元协调者：
+
+- 收集你对对象的所有操作（修改属性、添加对象、删除对象）。
+- 在调用 flush() 或 commit() 时，统一把这些改动翻译成 SQL，并执行到数据库。
+- 确保事务一致性，避免部分提交。
+
+```python
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+engine = create_engine("sqlite:///example.db")
+Session = sessionmaker(bind=engine)
+session = Session()
+
+# 新建对象
+user = User(name="Alice")
+session.add(user)
+
+# 修改对象
+user.name = "Alice Smith"
+
+# 删除对象
+session.delete(user)
+
+# 提交（Unit of Work 在这里发挥作用）
+session.commit()
+```
+
+在这个例子中：
+
+- Session 跟踪了 add、修改属性、delete。
+- 调用 commit() 时，Session 会生成 INSERT、UPDATE、DELETE SQL，并在一个事务内执行。
+- 如果其中某条语句失败，整个事务会回滚，保证数据一致性。
+
+### lazy='subquery' 和 lazy='joined' 的区别是什么？它们会对查询性能产生什么影响？
+
+1. lazy='joined'
+   机制：使用 JOIN（通常是 LEFT OUTER JOIN）在一次查询中把主表和关联表的数据都取出来。
+   行为：当你查询主对象时，关联对象就一并被加载进来了。
+
+```sql
+SELECT students.id,
+       students.name,
+       courses.id,
+       courses.title
+FROM students
+         LEFT OUTER JOIN student_course ON students.id = student_course.student_id
+         LEFT OUTER JOIN courses ON student_course.course_id = courses.id;
+```
+
+- 优点：
+    - 只需要一次 SQL 请求就能拿到主对象和关联对象。
+    - 避免了 N+1 查询问题（即每次访问关联对象都会触发额外查询）。
+- 缺点：
+    - 当主表和关联表数据量很大时，JOIN 会产生大量重复数据，网络传输和内存压力大。
+    - 对分页场景（LIMIT/OFFSET）尤其不友好，可能导致性能下降。
+
+2. lazy='subquery'
+   • 机制：先查询主对象，再用一个 子查询（subquery）+ JOIN 一次性加载所有关联对象。
+   • 行为：和 joined 类似，访问主对象时就会拿到关联对象，但它会把主对象的 ID 放在子查询中，再用 IN 来获取相关记录。
+
+```sql
+-- 第一次查询主对象
+SELECT students.id, students.name
+FROM students;
+
+-- 第二次查询关联对象（子查询）
+SELECT courses.id, courses.title, student_course.student_id
+FROM courses
+         JOIN student_course ON courses.id = student_course.course_id
+WHERE student_course.student_id IN (SELECT students.id
+                                    FROM students);
+```
+
+- 优点：
+    - 避免了 joined 的重复数据问题，结果集更紧凑。
+    - 比较适合一对多或多对多，能更好地控制结果集大小。
+- 缺点：
+    - 会额外多发一次 SQL 查询（但一般是批量加载，不会像 lazy='select' 那样产生 N+1 问题）。
+    - 子查询在某些数据库上可能比 JOIN 慢。
+
+### joinedload、selectinload、subqueryload 的区别与使用场景是什么？
+
+方式 SQL 方式 优点 缺点 适用场景
+joinedload JOIN 一次查出 一次查询完成，方便 数据重复，结果集庞大 关系表数据量小，JOIN 高效时
+subqueryload 主表 + 子查询 无重复数据 多条 SQL，子查询复杂 关系表数据量较大时
+selectinload 主表 + IN 查询 高效，SQL 简单 IN 太大时性能下降 推荐默认用法，尤其是现代数据库
+
+### SQLAlchemy 中如何查看最终生成的 SQL？
+
+1. 直接打印 Query / Statement
+   在 SQLAlchemy ORM 中，很多时候你可以直接打印查询对象，会得到带 参数占位符 的 SQL：
+
+```python
+from sqlalchemy.orm import Session
+from mymodels import User
+
+session = Session()
+
+stmt = session.query(User).filter(User.name == "Alice")
+print(stmt)  
+```
+
+```sql
+SELECT users.id, users.name
+FROM users
+WHERE users.name = :name_1
+```
+
+注意这里仍然是带 bindparam 占位符的 SQL，而不是实际值。
+
+2. 使用 .compile() 查看已编译 SQL
+   你可以显式调用 .compile()：
+
+```
+print(stmt.statement.compile())
+```
+
+或者对于 2.0 风格的语句：
+
+```python
+from sqlalchemy import select
+
+stmt = select(User).where(User.name == "Alice")
+print(stmt.compile()) 
+```
+
+3. 获取带参数展开的 SQL（适合调试）
+   如果想要看到 完整填充参数的 SQL，需要传入方言参数并启用 literal_binds：
+
+```python
+from sqlalchemy.dialects import postgresql
+
+print(stmt.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})) 
+```
+
+输出类似：
+
+```python
+SELECT users.id, users.name 
+FROM users 
+WHERE users.name = 'Alice'
+```
+
+4. 启用 echo=True 查看日志
+   如果你想在执行时自动打印所有 SQL，可以在创建 Engine 时开启日志：
+
+```python
+from sqlalchemy import create_engine
+
+engine = create_engine("postgresql://user:pass@localhost/dbname", echo=True) 
+```
+
+执行任何查询时，SQLAlchemy 会在日志里输出最终的 SQL 和绑定的参数。
+
+### 在高并发场景下，如何减少 N+1 查询问题？
+
+所谓 N+1 查询问题，是指在获取一组数据时，先执行 1 条查询 来获取主数据（通常是一张表里的记录），然后在循环中，为每一条记录再额外执行 N 条查询 来获取关联数据。
+这样总共会执行 N+1 条 SQL，导致严重的性能问题。
+
+```python
+-- 先查用户（1条）
+SELECT * FROM users;
+
+-- 然后对每个用户，再查订单（N条）
+SELECT * FROM orders WHERE user_id = 1;
+SELECT * FROM orders WHERE user_id = 2;
+...
+SELECT * FROM orders WHERE user_id = N;
+```
+
+### 解释 SQLAlchemy 的 hybrid_property 和 column_property 的区别，并举例应用场景。
+
+### SQLAlchemy 如何处理事务？session.commit() 与 flush() 的区别是什么？
+
+- 每个 Session 对象都维护一个数据库连接，并在需要时启动事务。
+- 默认情况下，Session 会在首次需要发出 SQL 语句时（如 INSERT、UPDATE、DELETE）自动开启一个事务。
+- 在事务中，所有对数据库的改动都是暂存的，直到你调用 commit() 才会真正提交到数据库。
+- 如果调用 rollback()，则会撤销尚未提交的改动。
+
+#### flush() 的作用
+
+- flush() 会将当前 Session 缓存（identity map） 中挂起的改动同步到数据库（发出对应的 INSERT/UPDATE/DELETE SQL）。
+- 但是：
+- flush() 不会提交事务，事务仍然保持打开状态。
+- 也就是说，数据在数据库中“已写入”，但如果随后 rollback()，这些改动仍会被撤销。
+- 通常在以下情况会自动触发 flush()：
+- 调用 query 时（SQLAlchemy 需要保证数据库和内存状态一致）。
+- 调用 commit() 前，会先隐式执行一次 flush()。
+
+#### commit() 的作用
+
+- commit() 会先调用 flush()（确保所有改动已写入数据库），然后提交事务。
+- 提交后，这些改动就永久保存，无法再用 rollback() 撤销。
+- 提交事务后，Session 会开启一个新的事务，以便继续后续操作。
+
+### 在分布式系统中，如何使用 SQLAlchemy 保证数据一致性？
+
+### 如何处理 SQLAlchemy 中的乐观锁和悲观锁？
+
+### SQLAlchemy 与数据库连接池（如 QueuePool）是如何交互的？如何配置连接池以应对高并发？
+
+### 请解释 expire_on_commit 参数的作用。
+
+### SQLAlchemy 中如何实现 自定义类型（TypeDecorator）？
+
+### 如何在 SQLAlchemy 中使用 事件（event listeners）？请给出一个实际使用案例。
+
+在 SQLAlchemy 中，事件（event listeners）是一种机制，用来在某些操作发生时（如表创建、对象加载、插入、更新、删除等）自动触发自定义逻辑。
+常见的事件类型包括：
+
+- before_insert、after_insert：在插入前/后执行逻辑
+- before_update、after_update：在更新前/后执行逻辑
+- before_delete、after_delete：在删除前/后执行逻辑
+- load、refresh：在对象被加载或刷新时执行逻辑
+
+### 解释 deferred() 和 undefer() 的使用场景。
+
+在 SQLAlchemy ORM 里，deferred() 和 undefer() 是一对经常配合使用的延迟加载工具，主要用在 优化查询性能 的场景。
+
+1. deferred() 的作用
+   • 定义模型时，可以把某个字段设置为“延迟加载”。
+   • 延迟加载字段在初始查询时 不会被 SELECT 出来，只有在访问该字段时，才会触发单独的 SQL 查询。
+
+这种方式特别适合存放 大字段（例如：长文本、BLOB、JSON 数据），因为大部分情况下用不到这些数据，不需要在查询时就加载出来。
+
+```python
+from sqlalchemy import Column, Integer, String, Text
+from sqlalchemy.orm import declarative_base, deferred
+
+Base = declarative_base()
+
+class Article(Base):
+    __tablename__ = "articles"
+    id = Column(Integer, primary_key=True)
+    title = Column(String(100))
+    # 内容字段设置为延迟加载
+    content = deferred(Column(Text))
+    
+article = session.query(Article).first()
+print(article.title)   # 不会触发 content 的加载
+print(article.content) # 这里才会额外发出一条 SQL，单独加载 content
+```
+
+2. undefer() 的作用
+   有时候我们 需要在某个查询中提前加载延迟字段，避免之后 N+1 的问题，就用 undefer()。
+
+```
+from sqlalchemy.orm import undefer
+
+article = session.query(Article).options(undefer(Article.content)).first()
+print(article.content)  # 这次不会再发新 SQL，因为 content 已经加载了
+```
+
+### SQLAlchemy 2.0 引入了什么重大变化？如何从 1.x 迁移到 2.x？
+
+统一的“2.0 风格”API
+
+- Engine、Connection、Session 的使用方式改变：
+  在 2.0 中，推荐使用 Session 作为主要入口，而不是混合使用 engine.connect() + sessionmaker() 的旧习惯。
+- Engine.connect() 仍存在，但更倾向于用 上下文管理器。
+- ORM 查询 API 统一为 select() 构造器，取代了旧的 session.query()。
+
+```python
+# ✅ 新风格 (2.0)
+stmt = select(User).where(User.name == "alice")
+result = session.execute(stmt).scalars().all()
+
+# ❌ 旧风格 (1.x)
+result = session.query(User).filter(User.name == "alice").all()
+```
+
+异步支持 (AsyncIO)
+
+- 新增 异步 API：AsyncEngine, AsyncSession。
+- 允许在高并发场景下更好地与 asyncio 协作。
+
+```python
+async with AsyncSession(engine) as session:
+    result = await session.execute(select(User))
+```
+
+Core/ORM API 统一
+
+- 许多 Core 和 ORM 操作方式趋同，比如 select()、insert()、update()。
+- 一致的返回结果 API（Result 对象），避免了 1.x 中不同方法返回不同类型的问题。
+
+弃用与移除
+
+- session.query() 被弃用（推荐用 select()）。
+- Query.get() 被移除，统一改为 Session.get()。
+- 隐式执行事务（autocommit）被彻底去掉，需要明确事务管理。
+- Engine.execute() 已移除，必须通过 Connection 或 Session。
+
+类型检查与声明式映射
+
+- 更好地支持 Python typing，与 mypy 配合更佳。
+- 建议用 Declarative Base 或 registry.mapped() 方式定义 ORM 映射。
+
+### 如何在 SQLAlchemy 中实现 分表/分库 策略？
+
+### 假设你需要在一个电商系统中查询 用户的最近一次订单，请用 SQLAlchemy ORM 写出查询语句。
+
+### 在一个复杂系统中，你发现 SQLAlchemy 的查询性能较低，你会如何诊断并优化？
+
+### 如果要在 SQLAlchemy 中实现审计日志（记录每次对象的修改历史），你会怎么设计？
+
+event listeners
+
+### 在微服务架构中，如何用 SQLAlchemy 与 Alembic 进行数据库迁移和版本管理？
+
+### SQLAlchemy 如何和异步框架（如 FastAPI + asyncpg）结合使用？
+

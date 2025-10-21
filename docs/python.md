@@ -1702,6 +1702,20 @@ LFU (Least Frequently Used)
 
 ### 高并发架构与微服务中的 Python 角色
 
+### WSGI 和 ASGI 的区别
+
+#### WSGI (Web Server Gateway Interface)
+
+- 是一个 同步的 Python Web 服务器接口标准。
+- 由 PEP 3333 定义，广泛应用于 Django、Flask 等传统 Web 框架。
+- 只支持 同步调用，基于阻塞 I/O。
+
+#### ASGI (Asynchronous Server Gateway Interface)
+
+- 是 WSGI 的继任者，设计为 异步 + 同步兼容 的接口。
+- 由 PEP 4843 定义，主要为支持 异步 I/O、WebSockets、HTTP/2 而生。
+- 常用于 FastAPI、Django Channels、Starlette 等现代框架。
+
 ## 系统设计与场景题
 
 ### 如果让你实现一个 高并发爬虫系统，会怎么设计？

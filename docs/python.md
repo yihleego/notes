@@ -1660,6 +1660,91 @@ LFU (Least Frequently Used)
 
 ### Python 项目常见的目录结构与模块组织。
 
+https://packaging.python.org/en/latest/discussions/src-layout-vs-flat-layout/
+这篇文章来自 Python Packaging Authority (PyPA) 的官方用户指南，题为 “src layout vs flat layout”，主要讨论 Python 项目中两种不同的源代码组织结构：flat layout（扁平布局）和 src layout（src 子目录布局）。下面我先分点解释其主要内容，再补充优缺点、什么时候选哪一种。
+
+“flat layout”指的是：项目的根目录就是代码所在目录（可 import 的包目录就在根目录下）。例如：
+
+```
+.
+├── README.md
+├── noxfile.py
+├── pyproject.toml
+├── setup.py
+├── awesome_package/
+│   ├── __init__.py
+│   └── module.py
+└── tools/
+    ├── generate_awesomeness.py
+    └── decrease_world_suck.py
+```
+
+“src layout”指的是：在根目录下再创建一个 src/ 子目录，把可 import 的包放在 src/awesome_package/… 中。比如：
+
+```
+.
+├── README.md
+├── noxfile.py
+├── pyproject.toml
+├── setup.py
+├── src/
+│    └── awesome_package/
+│       ├── __init__.py
+│       └── module.py
+└── tools/
+    ├── generate_awesomeness.py
+    └── decrease_world_suck.py
+```  
+
+文章指出以下几点区别：
+
+1. 安装前能否直接运行／导入
+    - 使用 src 布局的话，**必须先安装项目（或使用 editable 安装）**后，才能让导入正常工作。也就是说在开发目录顶层直接 python 调试代码可能会遇导入问题。 ￼
+    - 而 flat 布局中，因为源码就在根目录下，开发期间通常可以直接运行、导入，无需安装。 ￼
+2. 防止意外使用正在开发中的代码作为安装包
+    - 在 flat 布局下，Python 的 import 路径（sys.path）默认会将当前工作目录放在最前面（即 “.” 在首位）——这意味着如果你在根目录做开发，意外地导入的是你在开发目录里的包，而不是你已安装的版本。这样可能掩盖包装／打包／发布过程中遗漏文件的问题。文章指出：
+      “This can lead to subtle mis-configuration … which could result in files not being included in a distribution.” ￼
+    - src 布局通过将可 import 的包放在 root 目录之外（即在 src/ 目录下），使得在开发目录中直接运行不会把包当作已安装版本来导入，从而提高了测试 “安装后环境” 的一致性。 ￼
+3. Editable 安装（开发模式）与普通安装的不同行为
+    - 在 editable 安装（通常通过 pip install -e .）时，flat 布局会把整个项目根目录加入到 sys.path，因此不仅可 import 的包目录被加入，连根目录下的工具、配置、脚本也可能被意外加入 import 路径。这可能导致“在 editable 模式能导入／运行某些模块，但在正常安装后就不能” 的情况。文章指出：
+      “The flat layout would add the other project files … on the import path. This would make certain imports work in editable installations but not regular installations.” ￼
+    - src 布局因为包在 src/ 下，editable 安装则只加这一目录，避免根目录杂项被加入，从而让开发环境更接近于安装后的环境。 ￼
+4. 命令行界面 (CLI) 从源代码运行的一些额外考虑
+    - 文章还提到：用 src 布局开发 CLI 工具时，如果你希望“直接从源码目录运行”可能不太直观，因为包在 src/ 下不在顶层。文章提供一个 workaround：在 __main__.py 或脚本开头加上类似
+
+```python
+if not __package__:
+    package_source_path = os.path.dirname(os.path.dirname(__file__))
+    sys.path.insert(0, package_source_path)
+```
+
+优缺点总结：
+
+- src 布局的优点
+    - 更严谨：开发环境导入行为更贴近于“安装后”的环境，降低“只在开发时可用但在安装后失败”的风险。
+    - 防止意外从源码目录导入未经安装的包版本，从而更加真实地测试打包、安装流程。
+    - 在多人协作、CI/CD、发布流程中，帮助发现缺少包含文件、打包遗漏、路径问题等。
+- src 布局的缺点
+    - 开发流程稍微麻烦一点：每次在源码目录中运行时可能需要先安装（editable 模式）或额外配置 sys.path。
+    - 对于简单项目、个人脚本、快速原型可能显得“多余”／增加学习／设置成本。
+    - 新手可能会因 “包不在根目录” 而起初有些疑惑。
+- flat 布局的优点
+    - 简单直观：包和配置文件都在根目录，开发、运行、调试起来方便。
+    - 对于轻量级项目、脚本型项目、实验性项目非常合适。
+    - 更少初期结构成本、易上手。
+- flat 布局的缺点
+    - 容易产生“工作目录下导入的是源码而不是已安装版本” 的问题，从而掩盖打包或安装流程中的问题。
+    - Editable 模式与安装后环境可能差别较大，可能导致上线／发布后出现意外的错误。
+    - 在复杂项目（多模块、多子包、多人协作、自动打包／发布流程）中可能不够“保险”。
+
+在 src 布局 下，如果你想用源码直接跑测试，一般需要用 editable 安装（也叫开发模式安装）：
+
+```
+pip install -e .
+```
+
+这样做会把项目的依赖安装好，同时在 site-packages 里建立一个指向你 src/ 下源码目录的链接（而不是复制一份）。
+
 ### Python 的 包管理：pip、Poetry、Conda 的区别。
 
 ### 如何在大型 Python 项目中做 依赖注入？

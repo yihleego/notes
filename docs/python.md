@@ -1837,3 +1837,62 @@ pip install -e .
 
 ### CPython 的内存管理机制（引用计数、垃圾回收、GC Root）
 
+### contextmanager
+
+#### 什么是 contextmanager？
+
+在 Python 中，contextmanager 是一种简化 上下文管理器（Context Manager）的工具。上下文管理器的主要作用就是配合 with 语句使用，用于在代码块执行前后自动执行特定操作（比如打开文件时自动关闭，获取锁时自动释放，数据库连接时自动提交/回滚等）。
+
+通常我们会通过定义类并实现 __enter__ 和 __exit__ 方法来创建上下文管理器，而 contextlib.contextmanager 装饰器提供了一种更简洁的方式，用 生成器函数 来实现相同的功能。
+
+#### 基本用法
+
+```python
+from contextlib import contextmanager
+
+@contextmanager
+def my_context():
+    print("进入上下文")
+    yield "这是传递给 with 内部的值"
+    print("退出上下文")
+
+# 使用
+with my_context() as value:
+    print("with 中的内容:", value)
+```
+
+```
+进入上下文
+with 中的内容: 这是传递给 with 内部的值
+退出上下文
+```
+
+#### 错误处理
+
+如果 with 块中发生异常，yield 后的清理代码依然会执行，你可以在其中进行异常处理。
+
+```python
+from contextlib import contextmanager
+
+@contextmanager
+def open_file(name):
+    f = open(name, "w")
+    try:
+        yield f
+    finally:
+        print("关闭文件")
+        f.close()
+
+# 使用
+with open_file("test.txt") as f:
+    f.write("hello world")
+    # 如果这里发生异常，文件也会被正确关闭
+
+```
+
+#### 使用场景
+
+- 资源管理：文件、网络连接、数据库连接等。
+- 临时修改环境：比如临时修改全局变量、切换工作目录。
+- 事务处理：数据库事务的提交与回滚。
+- 测试代码：模拟上下文行为。

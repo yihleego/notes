@@ -32,6 +32,7 @@
         - [Metadata Locking](docs/mysql_metadatalocking.md)
         - [Sharding](docs/mysql_sharding.md)
         - [Read-Write Splitting](docs/mysql_readwritesplitting.md)
+        - [Optimization](docs/mysql_optimization.md)
     - [Redis ☀️](docs/redis.md)
     - [MongoDB 🌧️](docs/mongodb.md)
     - [TiDB 🌧️](docs/tidb.md)

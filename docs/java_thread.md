@@ -159,7 +159,7 @@ static class Fibonacci extends RecursiveTask<Integer> {
 
 `ThreadLocal`提供了线程内的局部变量，这种变量在线程的生命周期内起作用，减少同一个线程内多个方法或者组件之间一些公共变量的传递的复杂度。但是如果滥用`ThreadLocal`，就可能会导致内存泄漏
 
-```
+```java
 public class Thread implements Runnable {
     /* ThreadLocal values pertaining to this thread. This map is maintained
      * by the ThreadLocal class. */

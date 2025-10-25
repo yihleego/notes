@@ -1,12 +1,18 @@
 # AI
 
+https://huggingface.co/learn/cookbook/index
+
 ## AI Agents
 
 ### smolagents
 
+https://huggingface.co/learn/agents-course
+
 ## MCP Servers
 
-## RAG
+## RAG（Retrieval-augmented Generation）
+
+## FAISS（Facebook AI Similarity Search）
 
 ![python_ai_rag.png](images/python_ai_rag.png)
 

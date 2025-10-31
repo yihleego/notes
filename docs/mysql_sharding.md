@@ -120,6 +120,78 @@ if __name__ == '__main__':
 - ❌ 逻辑复杂，拼接规则需严格统一；
 - ❌ 需要保障并发下的序列生成正确。
 
+## 读写分离
+
+### 一、读写分离的基本原理
+
+当我们在 MySQL 架构中使用主从复制（主库写、从库读）时，通常会在应用层或中间件层（如 MyCat、Atlas、ProxySQL、Cobar、MaxScale 等）实现“读写分离”逻辑：
+
+- 写操作（INSERT、UPDATE、DELETE、REPLACE、ALTER…）→ 一定走主库（Master）。
+- 读操作（SELECT）→ 通常走从库（Slave）。
+
+代理层（中间件）会根据 SQL 语句的类型来自动判断走主还是从。
+
+### 二、判断主从路由的常见策略
+
+代理服务一般用以下几种方式判断：
+
+1. SQL解析
+   解析 SQL 语句的类型：
+    - 如果是 SELECT，默认去从库。
+    - 如果是非 SELECT（如 INSERT/UPDATE/DELETE），走主库。
+2. 事务感知
+   如果当前连接中开启了事务（BEGIN 或 START TRANSACTION），所有 SQL 都会路由到主库，以保证一致性。
+3. 强制路由规则
+   某些 SQL（如 SELECT LAST_INSERT_ID() 或带有函数 NOW()、RAND() 等的语句）必须走主库。
+
+### 三、主从延迟与“读写穿插”问题
+
+先执行查询 SQL，再执行 Update，会导致 2 个 SQL 分别在主从执行吗？
+
+答案是：取决于中间件实现和事务上下文。
+
+假设你的操作流程如下：
+
+```sql
+SELECT * FROM user WHERE id = 1;
+UPDATE user SET name = 'Tom' WHERE id = 1;
+```
+
+情况 1：无事务 + 默认读写分离
+
+- SELECT 被判断为读 → 走从库；
+- UPDATE 被判断为写 → 走主库。
+
+此时确实是两个 SQL 分别在从、主执行。
+
+风险： 如果主从复制存在延迟，那么从库的查询结果可能是旧数据（即“读到旧数据”问题）。
+
+情况 2：在事务中执行
+
+```sql
+BEGIN;
+SELECT * FROM user WHERE id = 1;
+UPDATE user SET name = 'Tom' WHERE id = 1;
+COMMIT;
+```
+
+此时中间件会认为这是一致性操作，会将所有 SQL 都路由到主库，避免主从延迟问题。
+
+情况 3：中间件支持“强制走主”的机制
+
+一些代理支持：
+
+- 写后读强制走主（Write-after-Read Consistency）
+- 可通过 hint 或配置实现，例如：
+    ```sql
+    /*master*/ SELECT * FROM user WHERE id = 1;
+    ```
+- 例如 Java 的注解，例如：
+    ```java
+    @Master
+    public List<User> listUsers() {/*...*/}
+    ```
+
 ## 实际场景
 
 ### 订单表分库分配

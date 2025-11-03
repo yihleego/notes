@@ -802,26 +802,26 @@ set 是 dict 的子集优化版本。
 ### 内存池机制（small object allocator）
 
 Python 内存池机制（pymalloc）的核心是：
-• 小对象（<512B） 通过内存池机制（arena → pool → block）管理，减少碎片和系统调用。
-• 大对象（>=512B） 直接由系统分配。
-• 搭配引用计数和 GC 机制实现自动化内存回收。
+- 小对象（<512B） 通过内存池机制（arena → pool → block）管理，减少碎片和系统调用。
+- 大对象（>=512B） 直接由系统分配。
+- 搭配引用计数和 GC 机制实现自动化内存回收。
 
 CPython 从 2.3 版本开始引入 pymalloc，主要优化了对“小对象”的内存分配。
-• 小对象：小于 512 字节的对象。
-• 大对象：大于等于 512 字节的对象，直接向系统申请。
+- 小对象：小于 512 字节的对象。
+- 大对象：大于等于 512 字节的对象，直接向系统申请。
 
 pymalloc 使用分层结构来减少碎片和系统调用：
 
 1. arena（竞技场）
-   • 大约 256 KB 的内存块，直接从操作系统申请。
-   • 一个 arena 会被划分为多个 pool。
+   - 大约 256 KB 的内存块，直接从操作系统申请。
+   - 一个 arena 会被划分为多个 pool。
 2. pool（池）
-   • 大小固定为 4 KB。
-   • 每个 pool 只存放同一大小类别的对象（如所有 16 字节对象）。
-   • 避免不同大小对象混用导致碎片。
+   - 大小固定为 4 KB。
+   - 每个 pool 只存放同一大小类别的对象（如所有 16 字节对象）。
+   - 避免不同大小对象混用导致碎片。
 3. block（块）
-   • pool 内部分配给对象的最小单元。
-   • 比如一个 pool 可能被分成 256 个 16 字节的 block。
+   - pool 内部分配给对象的最小单元。
+   - 比如一个 pool 可能被分成 256 个 16 字节的 block。
 
 ### sys.intern、字符串驻留
 
@@ -1448,8 +1448,8 @@ Python 里“没有真正的多线程”指的是在 CPython + CPU 密集型任�
 #### 事件循环（Event Loop）
 
 核心概念
-• 事件循环是 asyncio 的心脏，它不断运行，监听并调度不同的异步任务和 I/O 事件。
-• 在 Python 中，通常用 asyncio.run() 启动事件循环，事件循环会一直运行直到所有任务完成或被取消。
+- 事件循环是 asyncio 的心脏，它不断运行，监听并调度不同的异步任务和 I/O 事件。
+- 在 Python 中，通常用 asyncio.run() 启动事件循环，事件循环会一直运行直到所有任务完成或被取消。
 
 工作流程
 
@@ -1462,8 +1462,8 @@ Python 里“没有真正的多线程”指的是在 CPython + CPU 密集型任�
 #### 任务调度（Task Scheduling）
 
 协程与任务
-• 协程（Coroutine）：使用 async def 定义的函数，调用时返回一个协程对象。
-• 任务（Task）：事件循环对协程的进一步封装，用于调度和跟踪执行状态。
+- 协程（Coroutine）：使用 async def 定义的函数，调用时返回一个协程对象。
+- 任务（Task）：事件循环对协程的进一步封装，用于调度和跟踪执行状态。
 
 调度机制
 
@@ -1475,8 +1475,8 @@ Python 里“没有真正的多线程”指的是在 CPython + CPU 密集型任�
 时间调度
 
 事件循环除了处理 I/O，还可以管理 定时任务：
-• 通过 loop.call_later() 或 asyncio.sleep() 注册。
-• 事件循环会维护一个小顶堆，按时间顺序调度这些定时回调。
+- 通过 loop.call_later() 或 asyncio.sleep() 注册。
+- 事件循环会维护一个小顶堆，按时间顺序调度这些定时回调。
 
 ### await 与 async 的底层机制（协程对象、本质是生成器）
 
@@ -1699,16 +1699,16 @@ https://packaging.python.org/en/latest/discussions/src-layout-vs-flat-layout/
 文章指出以下几点区别：
 
 1. 安装前能否直接运行／导入
-    - 使用 src 布局的话，**必须先安装项目（或使用 editable 安装）**后，才能让导入正常工作。也就是说在开发目录顶层直接 python 调试代码可能会遇导入问题。 ￼
-    - 而 flat 布局中，因为源码就在根目录下，开发期间通常可以直接运行、导入，无需安装。 ￼
+    - 使用 src 布局的话，**必须先安装项目（或使用 editable 安装）**后，才能让导入正常工作。也就是说在开发目录顶层直接 python 调试代码可能会遇导入问题。 
+    - 而 flat 布局中，因为源码就在根目录下，开发期间通常可以直接运行、导入，无需安装。 
 2. 防止意外使用正在开发中的代码作为安装包
     - 在 flat 布局下，Python 的 import 路径（sys.path）默认会将当前工作目录放在最前面（即 “.” 在首位）——这意味着如果你在根目录做开发，意外地导入的是你在开发目录里的包，而不是你已安装的版本。这样可能掩盖包装／打包／发布过程中遗漏文件的问题。文章指出：
-      “This can lead to subtle mis-configuration … which could result in files not being included in a distribution.” ￼
-    - src 布局通过将可 import 的包放在 root 目录之外（即在 src/ 目录下），使得在开发目录中直接运行不会把包当作已安装版本来导入，从而提高了测试 “安装后环境” 的一致性。 ￼
+      “This can lead to subtle mis-configuration … which could result in files not being included in a distribution.” 
+    - src 布局通过将可 import 的包放在 root 目录之外（即在 src/ 目录下），使得在开发目录中直接运行不会把包当作已安装版本来导入，从而提高了测试 “安装后环境” 的一致性。 
 3. Editable 安装（开发模式）与普通安装的不同行为
     - 在 editable 安装（通常通过 pip install -e .）时，flat 布局会把整个项目根目录加入到 sys.path，因此不仅可 import 的包目录被加入，连根目录下的工具、配置、脚本也可能被意外加入 import 路径。这可能导致“在 editable 模式能导入／运行某些模块，但在正常安装后就不能” 的情况。文章指出：
-      “The flat layout would add the other project files … on the import path. This would make certain imports work in editable installations but not regular installations.” ￼
-    - src 布局因为包在 src/ 下，editable 安装则只加这一目录，避免根目录杂项被加入，从而让开发环境更接近于安装后的环境。 ￼
+      “The flat layout would add the other project files … on the import path. This would make certain imports work in editable installations but not regular installations.” 
+    - src 布局因为包在 src/ 下，editable 安装则只加这一目录，避免根目录杂项被加入，从而让开发环境更接近于安装后的环境。 
 4. 命令行界面 (CLI) 从源代码运行的一些额外考虑
     - 文章还提到：用 src 布局开发 CLI 工具时，如果你希望“直接从源码目录运行”可能不太直观，因为包在 src/ 下不在顶层。文章提供一个 workaround：在 __main__.py 或脚本开头加上类似
 

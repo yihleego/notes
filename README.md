@@ -10,7 +10,7 @@
         - [JVM](docs/java_jvm.md)
         - [Proxy](docs/java_proxy.md)
     - Python
-        - [Python 🌧️](docs/python.md)
+        - [Python Base 🌧️](docs/python_base.md)
         - [PEP8 🌧️](docs/python_pep8.md)
         - [Frameworks 🌧️](docs/python_frameworks.md)
         - [Tools 🌧️](docs/python_tools.md)

@@ -299,8 +299,8 @@ private void init(ThreadGroup g, Runnable target, String name,
 #### 两个线程交替打印奇偶数
 
 ```java
-private static volatile int count = 0;
 private static final Object lock = new Object();
+private static volatile int count = 0;
 
 static class Turning implements Runnable {
     @Override
@@ -316,6 +316,37 @@ static class Turning implements Runnable {
                         e.printStackTrace();
                     }
                 }
+            }
+        }
+    }
+}
+
+public static void main(String[] args) {
+    new Thread(new Turning(), "奇数").start();
+    new Thread(new Turning(), "偶数").start();
+}
+```
+
+```java
+private static final Lock lock = new ReentrantLock();
+private static final Condition condition = lock.newCondition();
+private static volatile int count = 0;
+
+static class Turning implements Runnable {
+    @Override
+    public void run() {
+        while (count < 100) {
+            lock.lock();
+            try {
+                System.out.println(Thread.currentThread().getName() + ":" + (++count));
+                condition.signal();
+                if (count < 100) {
+                    condition.await();
+                }
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            } finally {
+                lock.unlock();
             }
         }
     }

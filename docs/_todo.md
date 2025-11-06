@@ -1,3 +1,9 @@
-Business 方案
-MongoDB 原理
-Kafka 基础
+[algorithm](/docs/algorithm.md)
+[article](/docs/article.md)
+[business](/docs/business.md)
+[java_singleton](/docs/java_singleton.md)
+[java_version](/docs/java_version.md)
+[mysql_collation](/docs/mysql_collation.md)
+[mysql_myisam](/docs/mysql_myisam.md)
+[private](/docs/private.md)
+[series](/docs/series.md)

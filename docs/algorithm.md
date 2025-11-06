@@ -57,6 +57,31 @@ func highest(heights []int) int {
 }
 ```
 
+```python
+def trap(height):
+    mid = height.index(max(height))
+    left, right = 0, len(height) - 1
+    count = 0
+
+    wall = 0
+    while left < mid:
+        cur = height[left]
+        if cur < wall:
+            count += wall - cur
+        wall = max(wall, cur)
+        left += 1
+
+    wall = 0
+    while right > mid:
+        cur = height[right]
+        if cur < wall:
+            count += wall - cur
+        wall = max(wall, cur)
+        right -= 1
+
+    return count
+```
+
 ## TODO
 
 - 二叉排序树

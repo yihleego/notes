@@ -653,20 +653,10 @@ if (ctx.executor().inEventLoop()) {
 
 Linux 系统默认使用 epoll 作为 IO 多路复用器，JDK NIO 在 Linux 下默认也是 epoll，但其实现却存在漏洞。
 
-例如：即使是关注的 select 轮询事件返回的数量为 0，也可能使本应该阻塞的 select 方法被唤醒，导致空轮询，最终导致 CPU 满载，复现该 Bug 的场景如下：
+当对一个 TCP 连接进行“粗暴”的关闭时（例如，进程被杀掉、机器断电、网络断开，而不是正常的四次挥手），可能会触发一个内核状态。
+在这种状态下，epoll 会认为该通道一直处于“就绪”状态，特别是对于写操作（EPOLLOUT）或者错误事件（EPOLLERR，EPOLLHUP）。
+且 JDK 没有处理这种情况，从 java.nio.channels.SelectionKey 中可以发现没定义有异常事件的类型。
 
-```
-0. 服务端等待连接
-1. 客户端发起连接，并发送消息
-2. 服务端接受连接，并注册 OP_READ
-3. 服务端读取消息，并从 interest op set 中移除 OP_READ 
-4. 客户端关闭连接
-5. 服务端发送消息（此时没有读取操作也就没有设置 OP_READ）
-6. 服务端 select 方法被无限唤醒，且回事件数量为 0
-```
-
-因为 epoll 对于突然中断的连接 socket 会对返回的 eventSet 事件集合置为 POLLHUP 或者 POLLERR，eventSet 事件集合发生了变化时，会唤醒 select 方法，进而导致空轮询。
-根本原因在于 JDK 没有处理这种情况，从 java.nio.channels.SelectionKey 中可以发现没定义有异常事件的类型。
 
 ```java
 public abstract class SelectionKey {
@@ -683,6 +673,25 @@ public abstract class SelectionKey {
 2. 计算 select 方法的操作时间，如果阻塞时间大于等于超时时间，则说明 select 方法正常执行，重置轮询次数；如果阻塞时间小于超时时间，则需要进一步判断轮询次数是否超过了设定的阈值（默认为512），如果超过了说明可能出现了 Bug，需要重建 Selector。
 3. 调用 rebuildSelector() 方法重新打开一个 newSelector，然后将 oldSelector 的所有 key 注册到 newSelector，最后替换 oldSelector 即可。
 
+
+```java
+private boolean unexpectedSelectorWakeup(int selectCnt) {
+    if (Thread.interrupted()) {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Selector.select() returned prematurely because Thread.currentThread().interrupt() was called. Use NioEventLoop.shutdownGracefully() to shutdown the NioEventLoop.");
+        }
+
+        return true;
+    } else if (SELECTOR_AUTO_REBUILD_THRESHOLD > 0 && selectCnt >= SELECTOR_AUTO_REBUILD_THRESHOLD) {
+        logger.warn("Selector.select() returned prematurely {} times in a row; rebuilding Selector {}.", selectCnt, this.selector);
+        this.rebuildSelector();
+        return true;
+    } else {
+        return false;
+    }
+}
+```
+
 _在新版本的 Netty 中，则是通过判断是否执行了任务，或 select 方法返回的值是否大于 0，取代了旧版本中通过阻塞时间判断，本质上原理是一样的。_
 
 ## NIO 提供了 selector 的 epoll 实现，为什么 Netty 还要实现自己的 epoll 版本呢？
@@ -698,6 +707,25 @@ Netty 的 epoll transport 使用了边缘触发，而 Java 的 NIO 库使用了�
 |----------|----------------------|-------------------------------|
 | **水平触发** | LT (Level Triggered) | 默认模式，**只要缓冲区未读完/未写完就会反复触发事件** |
 | **边缘触发** | ET (Edge Triggered)  | 更高效，**只有状态从无到有发生变化时才触发一次**    |
+
+### 文件描述符
+
+在 epoll 中，每个文件描述符（fd）通常表示一个 I/O 资源，比如套接字、管道、终端、文件等。
+当内核检测到某个 fd 上的操作**可以立即完成而不会阻塞**时，就认为它“就绪”（ready）了。
+
+常见的几种就绪类型：
+
+- EPOLLIN：读就绪。意味着读取操作（read()、recv()）不会阻塞。
+- EPOLLOUT：写就绪。意味着写入操作（write()、send()）不会阻塞。
+- EPOLLERR：发生错误。
+- EPOLLHUP：对端关闭。
+
+例如：
+
+- 如果一个 socket 的接收缓冲区中有数据可读 → 它对 EPOLLIN 是就绪的；
+- 如果发送缓冲区有空间可以写 → 它对 EPOLLOUT 是就绪的。
+
+关键点：“就绪”并不意味着“必须处理”，而是“处理它不会阻塞”。
 
 ### 水平触发（LT）—— 默认模式、最容易用
 

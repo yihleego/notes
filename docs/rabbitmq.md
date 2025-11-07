@@ -32,7 +32,7 @@ Queue 是消息队列，用于储存消息的容器，每个消息都会被存�
 
 ### Exchange
 
-Queue 是消息交换器，用于接收生产者发送的消息，然后根据 Routing Key 将消息转发到绑定的 Queue。
+Exchange 是消息交换器，用于接收生产者发送的消息，然后根据 Routing Key 将消息转发到绑定的 Queue。
 
 三种常见的交换器类型：
 

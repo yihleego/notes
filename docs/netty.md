@@ -167,7 +167,7 @@ public void run(int port) throws InterruptedException {
 在创建服务端的时候实例化了 2 个`EventLoopGroup`，实际为一个`EventLoop`线程组，负责管理`EventLoop`的申请和释放。
 `EventLoopGroup`管理的线程数可以通过构造函数设置，如果没有设置，默认取`-Dio.netty.eventLoopThreads`，如果该系统参数也没有指定，则为可用的 CPU 内核数 × 2。
 
-- `bossGroup`：即 Acceptor 线程池，负责处理客户端的 TCP 连接请求。如果系统只有一个服务端端口需要监听，建议`bossGroup`线程组线程数设置为 1（即便设置成复数，也不会创建或使用多个线程）。
+- `bossGroup`：即 Acceptor 线程池，负责处理客户端的 TCP 连接请求。如果系统只有一个服务端端口需要监听，建议`bossGroup`线程组线程数设置为 1（即便设置成复数，也不会创建或使用多个线程，除非监听多个端口）。
 - `workerGroup`：是真正负责 I/O 读写操作的线程组，通过`ServerBootstrap`的`group()`方法进行设置，用于后续的`Channel`绑定。
 
 ### 第二步：启动服务端

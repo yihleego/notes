@@ -684,3 +684,65 @@ public abstract class SelectionKey {
 3. 调用 rebuildSelector() 方法重新打开一个 newSelector，然后将 oldSelector 的所有 key 注册到 newSelector，最后替换 oldSelector 即可。
 
 _在新版本的 Netty 中，则是通过判断是否执行了任务，或 select 方法返回的值是否大于 0，取代了旧版本中通过阻塞时间判断，本质上原理是一样的。_
+
+## NIO 提供了 selector 的 epoll 实现，为什么 Netty 还要实现自己的 epoll 版本呢？
+
+Netty 的 epoll transport 使用了边缘触发，而 Java 的 NIO 库使用了水平触发。而且 Netty 的 epoll transport 支持了 NIO 没有支持的配置选项，例如`TCP_CORK`、`SO_REUSEPORT`等等。
+
+> Netty's epoll transport uses epoll edge-triggered while java's nio library uses level-triggered. Beside this the epoll transport expose configuration options that are not present with java's nio like TCP_CORK, SO_REUSEPORT and more.
+> https://stackoverflow.com/questions/23465401/why-native-epoll-support-is-introduced-in-netty
+
+### epoll 的两种触发模式
+
+| 模式       | 英文                   | 特点                            |
+|----------|----------------------|-------------------------------|
+| **水平触发** | LT (Level Triggered) | 默认模式，**只要缓冲区未读完/未写完就会反复触发事件** |
+| **边缘触发** | ET (Edge Triggered)  | 更高效，**只有状态从无到有发生变化时才触发一次**    |
+
+### 水平触发（LT）—— 默认模式、最容易用
+
+只要文件描述符处于“就绪”状态，每次 epoll_wait 都会返回事件
+
+例如：socket 中还有未读数据，只要你没读完，就会一直触发 EPOLLIN
+
+和 select/poll 行为类似，但效率更高（O(1)）
+
+示例：EPOLLIN
+
+如果 socket 可读，应用程序只读了一部分数据
+➡️ 下一次 epoll_wait() 仍然会继续返回这个可读事件。
+
+优点：
+
+- ✅ 编程简单
+- ✅ 容错好，不容易丢事件
+- ✅ 不要求非阻塞 I/O（但推荐配合非阻塞）
+
+缺点：
+
+- ❌ 每次都触发事件，系统调用次数较多
+- ❌ 在高并发下效率不如 ET
+
+### 边缘触发（ET）—— 高性能、复杂模式
+
+只有状态发生“变化”时才触发事件
+
+可读事件例子：
+
+socket 缓冲区从空 → 非空 ✅ 会触发一次
+
+你没有把数据读完 😱 也不会再次触发，需要你循环读完！
+
+ET 模式必须使用非阻塞 I/O（non-blocking）
+否则你的 read/write 可能阻塞死整个线程。
+
+优点：
+
+- ✅ 极高效率，事件通知次数少
+- ✅ 适合高并发场景（如 Nginx、Redis）
+
+缺点：
+
+- ❌ 编程复杂
+- ❌ 容易漏事件，如果不把数据读完就可能再也收不到通知
+- ❌ 必须非阻塞 I/O

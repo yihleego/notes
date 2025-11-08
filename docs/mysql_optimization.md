@@ -436,6 +436,13 @@ WHERE EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id);
 | **删除字段（ALTER TABLE DROP COLUMN）**            | ✅ 可能重建                  | ✅ 重建   | 删除列会导致行格式变化，需复制整表。                                           |
 | **调整字段顺序（ALTER TABLE MODIFY ... AFTER ...）** | ✅                       | ✅      | 表结构重新定义，完全重建表，成本最高。                                          |
 
+| 操作类型               | 是否重建表       | 锁表风险 | 推荐做法                                 |
+|--------------------|-------------|------|--------------------------------------|
+| `VARCHAR` 扩大长度     | 否（In-place） | 低    | 直接执行或指定 `ALGORITHM=INPLACE`          |
+| `VARCHAR` 缩小长度     | 是           | 高    | 使用 pt-online-schema-change  或 gh-ost |
+| `DECIMAL` 修改精度/小数位 | 是           | 高    | 使用 pt-online-schema-change 或 gh-ost  |
+| 多列联合修改             | 可能是         | 中等   | 分步修改、先确认执行计划                         |
+
 ### 推荐方案
 
 | 环境规模                     | 推荐方案                             | 说明       |

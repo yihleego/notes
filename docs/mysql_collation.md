@@ -25,3 +25,20 @@ create table test (
   character set utf8mb4
   collate utf8mb4_0900_ai_cs;
 ```
+
+✅ 推荐排序规则：utf8mb4_0900_ai_ci
+
+在 MySQL 8.0 中，新引入了基于 Unicode 9.0 的排序规则系列，推荐使用 utf8mb4_0900_ai_ci：
+
+- “0900” 表示 Unicode 版本 9.0；
+- “ai” 表示 accent-insensitive（不区分音调）；
+- “ci” 表示 case-insensitive（不区分大小写）。
+
+此排序规则性能好、排序更符合现代语言规则，并支持多语言比较。
+
+| 使用场景      | 推荐排序规则                                         | 说明                                        |
+|-----------|------------------------------------------------|-------------------------------------------|
+| 区分大小写     | `utf8mb4_0900_as_cs`                           | as = accent-sensitive，cs = case-sensitive |
+| 对性能敏感、仅英文 | `utf8mb4_general_ci`                           | 老规则，速度略快但不完全符合 Unicode 排序标准               |
+| 特定语言优化    | 例如 `utf8mb4_0900_ai_ci` / `utf8mb4_0900_as_cs` | 也可用 `utf8mb4_0900_ai_ci` 作通用方案            |
+

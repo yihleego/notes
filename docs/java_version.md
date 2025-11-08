@@ -118,24 +118,47 @@
 - 增强InputStream
 - 新增HTTP Client API
 
-## Java 12 2019-03-19
+## Java 12 至 Java 16（2019–2021 年）
 
 - 增强字符串
 - 支持Unicode 11
 - JEP 354 Switch 表达式 (Preview)
-
-## Java 13 2019-09-17
-
 - JEP 350 Dynamic CDS Archives
 - JEP 351 ZGC Uncommit Unused Memory
 - JEP 353 重新实现 Socket API
 - JEP 354 Switch 表达式 (Preview)
 - JEP 355 文本块 (Preview)
 
-## Java 14
-
-## Java 15
-
-## Java 16
-
 ## Java 17
+
+- 密封类 (sealed classes/interfaces) 成为标准特性。
+- 模式匹配 (pattern matching) 在 instanceof 上进一步增强。
+- 稳定记录类 (records) 与模式匹配进一步推进。
+
+## Java 18 至 20（2022 年至 2023 年）
+
+- Java 18：默认字符集改为 UTF-8（跨平台一致性）
+- Java 19/20：主要是继续推进预览特性，如虚拟线程 (virtual threads)、模式匹配扩展、记录模式 (record patterns) 等，但语言层面重大「新」特性少。
+
+## Java 21
+
+- 模式匹配 for switch 成为正式特性。
+- 记录模式 (Record Patterns) 引入。
+- 进一步推进虚拟线程、结构化并发 (Structured Concurrency) 等。
+
+## Java 22 至 24（2024–2025）
+
+- Java 22：Unnamed variables & patterns；字符串模板 (String templates) 预览。
+- Java 23：Markdown 文档注释、模块导入声明预览、结构化并发预览等。
+- Java 24：继续推进 Stream Gatherers、简化源文件结构等。
+
+## Java 25（2025 年 9 月）
+
+- 模块导入声明 (Module Import Declarations) —— 允许直接导入模块导出包，而无需手动写很多 import。
+- 简化源文件 (Compact Source Files) + 实例 main() 方法 —— 对于小型应用/脚本更便捷。
+- 原始类型在模式匹配、switch 中支持 (Primitive types in patterns & switch) —— 例如 switch 里支持 int、long 等。
+- 性能／运行时提升：
+    - 紧凑对象头 (Compact Object Headers) —— 减少内存开销。
+    - 方法级 AOT (Ahead-of-Time) 预分析/启动优化 —— 针对云原生、容器化场景优化启动/预热时间。
+    - 结构化任务域 (Structured Task Scope) 新 API 支持更安全的并发。
+

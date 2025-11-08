@@ -5,5 +5,3 @@
 [java_version](/docs/java_version.md)
 [mysql_collation](/docs/mysql_collation.md)
 [mysql_myisam](/docs/mysql_myisam.md)
-[private](/docs/private.md)
-[series](/docs/series.md)

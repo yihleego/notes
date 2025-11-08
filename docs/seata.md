@@ -151,5 +151,40 @@ XA 模式是 Seata 一种无侵入的分布式事务解决方案，任何实现�
 初创公司尤其是孵化项目，建议使用最终一致，如果分布式事务出现报错，开发者可以通过 try...catch... 反向删除或更新数据，或者通过MQ将需要回滚的数据集中处理，可以一定程度保证回滚过程中服务宕机导致回滚失败。另外还可以通过定时对账系统来保证数据最终准确。
 
 举例：
+
 - 扣减库存成功，生成订单失败，此时可以发送一条MQ消息，尝试将库存加回去，并且通过日志记录加库存的原因。
 - 扣减库存成功，发生宕机，此时我们可以得知发生宕机的时间段，然后通过定时任务，对比库存扣减和订单的情况，判断是否需要将库存修正回去。
+- SKU增加`锁定库存`和`可用库存`字段可以在扣减库存事务异常时，为补偿数据作参考字段。
+
+```sql
+create table sku
+(
+    id              bigint primary key not null,
+    name            varchar(100)       not null,
+    total_stock     int unsigned       not null default 0 comment '总库存',
+    locked_stock    int unsigned       not null default 0 comment '锁定库存',
+    available_stock int unsigned       not null default 0 comment '可用库存'
+);
+
+-- 下单锁定库存
+UPDATE sku
+SET available_stock = available_stock - ?,
+    locked_stock = locked_stock + ?
+WHERE sku_id = ? AND available_stock >= ?;
+
+-- 支付成功确认出库
+UPDATE sku
+SET locked_stock = locked_stock - ?,
+    total_stock = total_stock - ?
+WHERE sku_id = ?;
+
+-- 订单取消释放库存
+UPDATE sku
+SET locked_stock = locked_stock - ?,
+    available_stock = available_stock + ?
+WHERE sku_id = ?;
+```
+
+`select * from sku where total_stock > locked_stock;` 右边是另一个字段，而不是常量或可优化的范围值，因此无法使用索引树进行范围查找。
+`select * from sku where available_stock > 0;` 右边虽然是另一个常量，但是库存是一个频繁更新的字段，不会被设置为索引，因此也会全表扫秒。
+所以,出于极致的性能考虑，`available_stock`字段可以被省略，若团队更强调数据的可读性，则可以保留。

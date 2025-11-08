@@ -378,3 +378,49 @@ SET optimizer_trace="enabled=off";
 - 与 EXPLAIN 一起使用：先用 EXPLAIN 看计划，再用 trace 看“为什么”。
 - 仅在测试环境使用：生产环境开启 trace 可能有性能影响。
 - 可以保存 JSON 到文件，用 JSON viewer 分析结构。
+
+## `EXISTS` vs `IN`
+
+### `IN`的执行方式
+
+`IN`子句会先执行子查询，把结果集保存下来，然后将外层查询的每一行拿来与这个结果集进行比对。
+
+```sql
+SELECT * FROM users
+WHERE id IN (SELECT user_id FROM orders);
+```
+
+执行逻辑大致如下：
+
+1. 执行子查询 (SELECT user_id FROM orders)；
+2. 将结果集（可能是上千行甚至更多）放入内存；
+3. 外层查询扫描 users 表的每一行，判断 id 是否存在于结果集中。
+
+⚠️如果子查询结果集很大，IN 的判断过程会变得非常慢。
+尤其在 MySQL 5.x 早期版本中，IN 子查询甚至可能被物化成临时表。
+
+### `EXISTS`的执行方式
+
+`EXISTS`子句则是一种布尔判断，它不关心子查询返回什么，只关心是否存在匹配的记录。
+
+```sql
+SELECT * FROM users u
+WHERE EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id);
+```
+
+执行逻辑：
+
+1. 外层表 users 每扫描一行；
+2. 立刻执行子查询，用当前 users.id 去 orders 表里查；
+3. 一旦找到匹配行（WHERE o.user_id = u.id），立即返回 TRUE，不再继续扫描；
+4. 如果找不到，则返回 FALSE。
+
+✅ 因此，EXISTS 可以利用索引高效查找，并且只要找到第一条匹配记录就停止，非常节省资源。
+
+| 特性        | `IN`          | `EXISTS` |
+|-----------|---------------|----------|
+| 是否缓存子查询结果 | 是（可能会物化）      | 否        |
+| 是否逐行判断    | 否（一次性比对）      | 是（逐行匹配）  |
+| 能否利用索引    | 不一定（取决于子查询优化） | 通常能利用索引  |
+| 大结果集性能    | 较差            | 较优       |
+| 小结果集性能    | 差异不大          | 差异不大     |

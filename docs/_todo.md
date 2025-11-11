@@ -3,5 +3,6 @@
 [business](/docs/business.md)
 [java_singleton](/docs/java_singleton.md)
 [java_version](/docs/java_version.md)
+[linux](/docs/linux.md)
 [mysql_collation](/docs/mysql_collation.md)
 [mysql_myisam](/docs/mysql_myisam.md)

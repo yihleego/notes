@@ -774,3 +774,303 @@ ET 模式必须使用非阻塞 I/O（non-blocking）
 - ❌ 编程复杂
 - ❌ 容易漏事件，如果不把数据读完就可能再也收不到通知
 - ❌ 必须非阻塞 I/O
+
+## Netty 基础与架构原理
+
+### 请解释 Netty 的整体架构，包括 Reactor 模型、EventLoop、Channel、Pipeline 的关系。
+
+#### 1. Netty 的整体架构概览
+
+Netty 是基于 Reactor 异步事件驱动模型 的高性能网络通信框架。其核心目标是：
+
+- 高吞吐、低延迟
+- 避免线程上下文切换
+- 高扩展性与强健的 backpressure 机制
+- 统一抽象不同传输层（NIO、EPOLL、KQueue）
+
+Netty 的核心抽象主要包括：
+
+- Reactor 模型（多线程事件驱动）
+- EventLoop / EventLoopGroup（事件循环与线程模型）
+- Channel（连接的抽象）
+- ChannelPipeline + ChannelHandler（责任链模式）
+- ByteBuf（高性能缓冲区）
+
+#### 2. Reactor 模型：Netty 的事件驱动体系
+
+Netty 采用 主从多 Reactor 模型（Master–Slave Reactor），通常体现为两个事件循环组：
+
+- Boss EventLoopGroup —— 接受连接
+- Worker EventLoopGroup —— 处理 I/O（读写）
+
+流程如下：
+
+1. Boss Reactor（Acceptor）
+    - 监听 ServerSocketChannel 的 accept 事件
+    - 每当有新连接，创建一个对应的 Channel
+    - 将 Channel 注册到某个 Worker EventLoop 上
+2. Worker Reactor
+    - 负责每个连接的读、写事件
+    - 事件触发后执行用户自定义的 handler 逻辑（通过 Pipeline）
+
+   整个模型可视化：
+    ```
+             ┌────────────────┐
+             │ Boss Group     │
+             │ (Acceptor)     │
+             └──────┬─────────┘
+                    │ accept()
+                    ▼
+             ┌────────────────┐
+             │ Worker Group   │
+             │ (I/O, handlers)│
+             └──────┬─────────┘
+          read/     │      write/
+        pipeline    │    pipeline
+    ```
+
+   特点：
+    - Reactor 负责分发事件，但不做业务逻辑
+    - 每个 Channel 绑定到一个 EventLoop（线程）上，避免锁竞争
+    - 事件全部异步触发执行
+
+#### 3. EventLoop：线程模型与事件循环
+
+EventLoop = 一个永久运行的事件循环 + 一个固定线程
+
+核心特点：
+
+1. 一个 EventLoop 绑定一个单线程
+2. 一个 Channel 终生绑定某个 EventLoop
+3. EventLoop 执行的任务包括：
+    - I/O 事件（读写）
+    - 定时任务
+    - 用户提交的普通任务
+
+事件循环的典型伪代码：
+
+```java
+for(;;) {
+    Selector.select();
+    processSelectedKeys();
+    runAllTasks();
+}
+```
+
+Netty 通过此机制实现：
+
+- 无锁 I/O 处理（因为 Channel 的回调只在该线程内）
+- 任务队列可实现跨线程通信（EventLoop.execute/submit）
+
+#### 4. Channel：连接的抽象
+
+Channel 是对底层连接（TCP/UDP/Sock）的一层抽象。
+
+主要特点：
+
+- 表示一个打开的网络连接（socket）
+- 与底层 selector 的 key 关联
+- Channel 与一个 EventLoop 一对一绑定
+- Channel 中维护一个 ChannelPipeline
+
+常见实现：
+
+- NioSocketChannel（客户端）
+- NioServerSocketChannel（服务器 accept）
+
+#### 5. ChannelPipeline：责任链统筹器
+
+ChannelPipeline 是一条由多个 ChannelHandler 组成的链。
+
+用途：
+
+- 组织处理读写事件的 Handler
+- 提供 inbound/outbound 方向处理
+
+Pipeline 的结构：
+
+- `HeadContext → Handler1 → Handler2 → TailContext`
+
+事件流向：
+
+- inbound（入站）事件：Head → Tail
+    - 读事件、连接事件
+- outbound（出站）事件：Tail → Head
+    - 写事件、flush、bind、connect
+
+Pipeline 的好处：
+
+- 插拔式 handler
+- 顺序清晰，职责分明
+- 易扩展（编码解码器、协议栈）
+
+#### 6. ChannelHandler：业务逻辑处理
+
+每一个 Handler 专注某一方面工作，例如：
+
+- 解码器 ByteToMessageDecoder
+- 编码器 MessageToByteEncoder
+- 连接状态处理
+- 心跳、协议处理
+- 业务逻辑
+
+Netty 通过 Pipeline + Handler 组合提供强大的可扩展性。
+
+#### 7. 四者之间的整体关系图
+
+```
+                           ┌──────────────────────────┐
+                           │ EventLoopGroup (Boss)    │
+                           └───────────┬──────────────┘
+                                       │ accept
+                                       ▼
+                           ┌──────────────────────────┐
+                           │ EventLoopGroup (Worker)  │
+                           └───────────┬──────────────┘
+                                       │ register
+         ┌─────────────────────────────┼──────────────────────────┐
+         │                             │                          │
+         ▼                             ▼                          ▼
+   ┌─────────────┐                ┌─────────────┐             ┌─────────────┐
+   │ EventLoop 1 │                │ EventLoop 2 │             │ EventLoop 3 │ ...
+   └───────┬─────┘                └───────┬─────┘             └───────┬─────┘
+           │ 1:1                          │                           │
+           ▼                              ▼                           ▼
+   ┌─────────────┐                ┌─────────────┐             ┌─────────────┐
+   │   Channel   │                │   Channel   │             │   Channel   │
+   └───────┬─────┘                └───────┬─────┘             └───────┬─────┘
+           │                              │                           │
+           ▼                              ▼                           ▼
+   ┌─────────────────┐            ┌─────────────────┐         ┌─────────────────┐
+   │ ChannelPipeline │            │ ChannelPipeline │         │ ChannelPipeline │
+   └─────────────────┘            └─────────────────┘         └─────────────────┘
+           │ handlers                     │ handlers                  │ handlers
+```
+
+### Netty 为什么采用 Reactor 多线程模型？与传统 BIO/NIO 的区别是什么？
+
+### Netty 线程模型中 BossGroup 与 WorkerGroup 的职责是什么？
+
+### Netty 中的 Channel 与 Java NIO 中的 SocketChannel 有何不同？
+
+### Netty 如何实现无锁化（或低锁化）架构？举例说明。
+
+## NIO 与操作系统层面的基础
+
+### 解释 Selector、SelectionKey、EventLoop 之间的关系。
+
+### 操作系统的零拷贝（zero-copy）机制在 Netty 中如何体现？如 FileRegion、CompositeByteBuf 等。
+
+### 请解释 Linux epoll 的工作机制，与 Netty epoll transport 的使用场景。
+
+### 为什么 epoll 在水平触发（LT）和边缘触发（ET）模式下行为不同，Netty 如何处理？
+
+## 核心组件与实现机制
+
+### Channel 与 ChannelFuture
+
+#### Netty 中的 ChannelFuture 是如何实现异步通知的？
+
+#### Channel 的生命周期有哪些阶段？
+
+#### 为什么 ChannelPromise 有时比 ChannelFuture 更合适？
+
+### ByteBuf
+
+#### ByteBuf 的三大指针（readerIndex、writerIndex、capacity）作用是什么？
+
+#### Unpooled 和 Pooled ByteBuf 的区别是什么？
+
+#### DirectBuffer 与 HeapBuffer 的适用场景？
+
+#### ByteBufAllocator 如何优化内存碎片？
+
+### Pipeline 与 Handler
+
+#### Netty Pipeline 的责任链设计有什么优势？
+
+#### ChannelHandlerContext 在事件传播中扮演什么角色？
+
+#### Inbound 和 Outbound 事件传播顺序是什么？
+
+#### Handler 被标记为 @Sharable 有什么含义？有哪些坑？
+
+## 编解码机制（Codec）
+
+### Netty 框架中 LengthFieldBasedFrameDecoder 的工作机制是什么？
+
+### Protobuf 与 Netty 的结合通常怎么做？
+
+### 自定义协议如何设计？如何防止粘包/拆包问题？
+
+### 为什么 Netty 推荐使用 MessageToMessageEncoder / MessageToByteEncoder 等抽象类？
+
+### 如何编写一个零拷贝的 Decode/Encode？
+
+## 线程模型与并发机制
+
+### Netty 的 EventLoop 为什么要求 Channel 与 EventLoop 绑定？
+
+### 任务提交到 EventLoop 的方式有哪些？
+
+### 为什么 Handler 内部不应该阻塞？如果必须阻塞如何处理（如自定义线程池）？
+
+### Netty 内部是如何做到线程安全的？
+
+## TCP、连接管理与心跳机制
+
+### Netty 如何处理 TCP 粘包拆包问题？
+
+### Netty 如何实现心跳检测？IdleStateHandler 的原理是什么？
+
+### TCP KeepAlive 与应用层心跳的区别是什么？
+
+### Netty 如何做连接空闲管理和超时关闭？
+
+### 如何处理高频短连接或大量长连接？
+
+## 性能优化与实践技巧
+
+### Netty 如何减少内存分配？Pooled ByteBuf 的内部机制是什么？
+
+### 如何调优 Netty 服务器的线程数和 backlog？
+
+### TCP 参数调优，如 SO_BACKLOG、TCP_NODELAY、SO_REUSEADDR、SO_SNDBUF 的作用？
+
+### Netty 高吞吐场景下如何处理反压（Backpressure）问题？
+
+### 如何排查 Netty 的内存泄漏？ResourceLeakDetector 的使用方式？
+
+## Netty 源码深度问题（高级/专家级）
+
+### EventLoopGroup 是如何实现多线程调度的？
+
+### NioEventLoop 的核心循环（run() 方法）处理流程是什么？
+
+### Netty 如何封装 Java 原生 Selector 以避免空轮询（epoll 100% CPU）问题？
+
+### Unsafe（如 AbstractChannel.AbstractUnsafe）在 Channel 操作中扮演什么角色？
+
+### Pipeline 的事件传播是如何做到 O(1) 插入和 O(1) 查找的？
+
+## 分布式与协议栈场景
+
+### 如何使用 Netty 实现一个 RPC 框架（如 Dubbo 内部的 Netty）？
+
+### Netty 如何支持高并发下的负载均衡？
+
+### 在传递大型对象（如图片、日志等）时如何处理分片传输？
+
+### Netty 在网关、代理服务器、IM 系统中各自的难点是什么？
+
+## 排障、可观测性与实战
+
+### Netty 程序 CPU 飙升如何排查？
+
+### Netty Handler 链路异常如何捕获和恢复？
+
+### 如何监控 Netty GC、内存池、线程池利用率？
+
+### Netty 中常见的 Channel 异常有哪些？如何处理？
+
+### 如何使用 Wireshark 或 tcpdump 辅助调试 Netty 网络问题？

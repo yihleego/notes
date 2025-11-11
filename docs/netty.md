@@ -1,6 +1,282 @@
 # Netty
 
-## 介绍
+## 网络基础
+
+![network_protocol.png](images/network_protocol.png)
+
+## TCP (Transmission Control Protocol)
+
+### TCP 头格式
+
+![network_tcp_header.png](images/network_tcp_header.png)
+
+- TCP的包是没有IP地址的，那是IP层上的事。但是有源端口和目标端口。
+- 一个TCP连接需要四个元组来表示是同一个连接（src_ip, src_port, dst_ip, dst_port）准确说是五元组，还有一个是协议。
+- 但因为这里只是说TCP协议，所以，这里我只说四元组。
+    - 注意上图中的四个非常重要的东西： Sequence Number是包的序号，用来解决网络包乱序（reordering）问题。
+    - Acknowledgement Number就是ACK——用于确认收到，用来解决不丢包的问题。
+    - Window又叫Advertised-Window，也就是著名的滑动窗口（Sliding Window），用于解决流控的。
+    - TCP Flag ，也就是包的类型，主要是用于操控TCP的状态机的。
+
+### TCP 状态机
+
+其实，网络上的传输是没有连接的，包括TCP也是一样的。而TCP所谓的“连接”，其实只不过是在通讯的双方维护一个“连接状态”，让它看上去好像有连接一样。所以，TCP的状态变换是非常重要的。
+
+![network_tcp_conn.png](images/network_tcp_conn.png)
+
+为什么建链接要3次握手，断链接需要4次挥手？
+
+对于建链接的3次握手，主要是确认双方都有收发能力，初始化 Sequence Number 的初始值。通信的双方要互相通知对方自己的初始化的Sequence Number（缩写为ISN：Inital Sequence Number）——所以叫SYN，全称Synchronize Sequence Numbers。也就上图中的 x 和 y。这个号要作为以后的数据通信的序号，以保证应用层接收到的数据不会因为网络上的传输的问题而乱序（TCP会用这个序号来拼接数据）。
+
+对于4次挥手，其实你仔细看是2次，因为TCP是全双工的，所以，发送方和接收方都需要Fin和Ack。只不过，有一方是被动的，所以看上去就成了所谓的4次挥手。如果两边同时断连接，那就会就进入到CLOSING状态，然后到达TIME_WAIT状态。下图是双方同时断连接的示意图（你同样可以对照着TCP状态机看）：
+
+![network_tcp_close.png](images/network_tcp_close.png)
+
+### Sequence Number
+
+![network_tcp_seq.png](images/network_tcp_seq.png)
+
+Sequence Number 的增加是和传输的字节数相关的。上图中，三次握手后，来了两个Len:1440的包，而第二个包的SeqNum就成了1441。然后第一个ACK回的是1441，表示第一个1440收到了。
+
+TCP 的序列号字段长度是 32 位无符号整数，因此，TCP 序列号的最大值为 2³² - 1。
+
+当序列号增加到最大值后，如果继续增加，它会 回到 0 重新开始。
+这种机制称为 序列号回绕（Sequence Number Wrap Around）。
+
+```
+当前序列号 = 4,294,967,290
+发送 20 字节
+→ 前 6 字节的序列号：4294967290 ~ 4294967295
+→ 接下来继续回绕，从 0 ~ 13
+```
+
+也就是说，序列号是模 2³² 的循环计数器。
+
+虽然序列号会回绕，但 TCP 通过以下机制保证不会把旧数据误认为新数据：
+
+- 时间戳选项（TCP Timestamps Option）：用来区分不同连接或旧数据。
+- 最大报文生存时间（MSL）：TCP 规定一个连接关闭后，等待 2×MSL（通常为 120 秒）才能完全释放，确保旧数据包都消失。
+- 因此，即使序列号回到 0，也不会和旧连接中的数据冲突。
+
+
+理论上，序列号空间大小：2³² ≈ 4 GB
+
+如果传输速率是 1 Gbps（约 125 MB/s），则序列号回绕大约需要：`4 GB / 125 MB/s ≈ 32 秒`
+
+因此在高速链路中，序列号回绕是可能的，这也是为什么现代 TCP 建议使用 RFC 1323（TCP Timestamps） 选项来避免歧义。
+
+## UDP (User Datagram Protocol)
+
+### UDP 头格式
+
+![network_udp_header.png](images/network_udp_header.png)
+
+- 源端口: 占16位、源端口号。在需要对方回信时选用。不需要时可用全0。
+- 目的端口: 占16位、目的端口号。这在终点交付报文时必须使用。
+- 长度: 占16位、UDP用户数据报的长度,其最小值是8(仅有首部)。
+- 检验和: 占16位、检测UDP用户数据报在传输中是否有错。有错就丢弃。
+
+请注意，虽然在 UDP 之间的通信要用到其端口号，但由于 UDP 的通信是无连接的，因此不需要使用套接字。
+
+## 什么是Socket？Java中怎么用Socket
+
+Socket（套接字）是计算机网络通信中非常核心的概念，用于实现不同主机之间进程间的通信。
+可以简单理解为：Socket 是通信的“端点”，它为不同计算机上的程序之间建立连接、发送数据和接收数据提供了接口。
+
+### Socket的基本概念
+
+在网络编程中，通信的两端必须通过 IP地址 + 端口号 来唯一标识。
+Socket 就是将这两者封装起来的对象，它使得我们可以像读写文件一样进行网络通信。
+
+根据使用的协议类型，Socket主要分为两种：
+
+- TCP Socket（流式套接字）——面向连接，可靠传输。
+- UDP Socket（数据报套接字）——无连接，快速但不保证可靠性。
+
+### Java中使用Socket（以TCP为例）
+
+服务端：
+
+```java
+import java.io.*;
+import java.net.*;
+
+public class Server {
+    public static void main(String[] args) throws IOException {
+        // 创建ServerSocket对象，监听指定端口
+        ServerSocket serverSocket = new ServerSocket(8888);
+        System.out.println("服务器启动，等待客户端连接...");
+
+        // 等待客户端连接（阻塞）
+        Socket socket = serverSocket.accept();
+        System.out.println("客户端已连接：" + socket.getInetAddress());
+
+        // 获取输入输出流
+        BufferedReader input = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+        PrintWriter output = new PrintWriter(socket.getOutputStream(), true);
+
+        // 读取客户端消息
+        String message = input.readLine();
+        System.out.println("收到客户端消息：" + message);
+
+        // 回复客户端
+        output.println("服务器收到消息：" + message);
+
+        // 关闭资源
+        input.close();
+        output.close();
+        socket.close();
+        serverSocket.close();
+    }
+}
+```
+
+客户端：
+
+```java
+import java.io.*;
+import java.net.*;
+
+public class Client {
+    public static void main(String[] args) throws IOException {
+        // 连接服务器（IP地址，端口号）
+        Socket socket = new Socket("127.0.0.1", 8888);
+
+        // 获取输入输出流
+        BufferedReader input = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+        PrintWriter output = new PrintWriter(socket.getOutputStream(), true);
+
+        // 发送消息到服务器
+        output.println("你好，服务器！");
+
+        // 接收服务器回复
+        String response = input.readLine();
+        System.out.println("服务器回复：" + response);
+
+        // 关闭资源
+        input.close();
+        output.close();
+        socket.close();
+    }
+}
+```
+
+### 使用 NIO 实现
+
+服务端：
+
+```java
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.nio.ByteBuffer;
+import java.nio.channels.*;
+import java.util.Iterator;
+
+public class NioTcpServer {
+    public static void main(String[] args) throws IOException {
+        // 1. 打开 ServerSocketChannel
+        ServerSocketChannel serverChannel = ServerSocketChannel.open();
+        serverChannel.bind(new InetSocketAddress(9999));
+        serverChannel.configureBlocking(false); // 设置非阻塞模式
+
+        // 2. 打开 Selector
+        Selector selector = Selector.open();
+
+        // 3. 注册监听事件：接收连接事件
+        serverChannel.register(selector, SelectionKey.OP_ACCEPT);
+        System.out.println("NIO TCP 服务器已启动，监听端口 9999...");
+
+        // 4. 主循环
+        while (true) {
+            // 等待事件就绪（阻塞，直到至少有一个事件）
+            selector.select();
+
+            // 5. 获取所有就绪事件
+            Iterator<SelectionKey> it = selector.selectedKeys().iterator();
+            while (it.hasNext()) {
+                SelectionKey key = it.next();
+                it.remove();
+
+                // 6. 处理不同类型的事件
+                if (key.isAcceptable()) {
+                    // 接受新连接
+                    ServerSocketChannel server = (ServerSocketChannel) key.channel();
+                    SocketChannel client = server.accept();
+                    client.configureBlocking(false);
+                    System.out.println("客户端已连接: " + client.getRemoteAddress());
+
+                    // 注册读事件
+                    client.register(selector, SelectionKey.OP_READ);
+                } else if (key.isReadable()) {
+                    // 读取客户端消息
+                    SocketChannel client = (SocketChannel) key.channel();
+                    ByteBuffer buffer = ByteBuffer.allocate(1024);
+                    int read = client.read(buffer);
+
+                    if (read == -1) {
+                        // 客户端关闭连接
+                        System.out.println("客户端断开连接: " + client.getRemoteAddress());
+                        client.close();
+                        continue;
+                    }
+
+                    buffer.flip();
+                    String msg = new String(buffer.array(), 0, buffer.limit());
+                    System.out.println("收到客户端消息: " + msg);
+
+                    // 回显消息
+                    client.write(ByteBuffer.wrap(("服务端收到: " + msg).getBytes()));
+                }
+            }
+        }
+    }
+}
+```
+
+客户端：
+
+```java
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.nio.ByteBuffer;
+import java.nio.channels.SocketChannel;
+import java.util.Scanner;
+
+public class NioTcpClient {
+    public static void main(String[] args) throws IOException {
+        // 1. 打开 SocketChannel
+        SocketChannel socketChannel = SocketChannel.open();
+        socketChannel.connect(new InetSocketAddress("localhost", 9999));
+        socketChannel.configureBlocking(false);
+
+        Scanner scanner = new Scanner(System.in);
+        ByteBuffer buffer = ByteBuffer.allocate(1024);
+
+        System.out.println("已连接到服务器，可以输入消息：");
+
+        while (true) {
+            System.out.print("> ");
+            String msg = scanner.nextLine();
+            if ("exit".equalsIgnoreCase(msg)) break;
+
+            // 发送消息
+            socketChannel.write(ByteBuffer.wrap(msg.getBytes()));
+
+            // 读取响应
+            buffer.clear();
+            int read = socketChannel.read(buffer);
+            if (read > 0) {
+                buffer.flip();
+                System.out.println("服务端响应: " + new String(buffer.array(), 0, buffer.limit()));
+            }
+        }
+
+        socketChannel.close();
+    }
+}
+```
+
+## 介绍 Netty
 
 Netty 是一个异步的、基于事件驱动的网络应用框架，用于快速开发高性能、高可靠性的网络 IO 程序。是目前最流行的 NIO 框架，适用于服务器通讯相关的多种应用场景
 
@@ -985,7 +1261,7 @@ Netty 通过“单线程事件循环 + MPSC 队列 + 线程局部内存 + 消息
 ### 解释 Selector、SelectionKey、EventLoop 之间的关系。
 
 - Selector：Java NIO 的多路复用器，负责监控多个 Channel 的 I/O 就绪事件（如读、写、连接等）。它是事件检测的核心。
-- SelectionKey：表示 Channel 在 Selector 上的注册关系。每个注册的 Channel 会生成一个 SelectionKey，用来描述该 Channel 感兴趣的事件类型（如 OP_READ、OP_WRITE），以及事件触发后要处理的对象（附加信息或回调）。
+- SelectionKey：表示 Channel 在 Selector 上的注册关系，连接 Selector 与 Channel 的桥梁，是多路复用的核心。每个注册的 Channel 会生成一个 SelectionKey，用来描述该 Channel 感兴趣的事件类型（如 OP_READ、OP_WRITE），以及事件触发后要处理的对象（附加信息或回调）。
 - EventLoop：Netty 对底层 Selector 的封装。一个 EventLoop 线程绑定一个 Selector，循环执行“检测 I/O 事件 → 处理事件 → 执行任务队列”的过程。
 
 关系总结：

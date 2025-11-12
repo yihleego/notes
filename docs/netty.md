@@ -1815,3 +1815,7 @@ public class RpcClientHandler extends SimpleChannelUpstreamHandler {
     - 视情况关闭通道或继续通信。
 
 ### 如何使用 Wireshark 或 tcpdump 辅助调试 Netty 网络问题？
+
+### 如何对 Netty 应用进行基准测试
+
+netty-microbench

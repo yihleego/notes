@@ -355,6 +355,116 @@ Apache RocketMQ 的总体架构主要由以下几个核心组件构成，每个�
 
 ### CommitLog / ConsumeQueue / IndexFile 的存储结构和职责分别是什么？
 
+#### 一、CommitLog（消息主体存储）
+
+##### 职责
+
+- 存储所有消息的原始数据（Body + Properties + Topic + QueueId 等）；
+- 是 RocketMQ 的唯一消息写入入口；
+- 提供 顺序写入，保证写性能；
+- 为 ConsumeQueue 和 IndexFile 提供数据源。
+
+##### 存储结构
+
+- 单一文件序列（多个 commitlog 文件顺序组成，文件名为偏移量起点，默认每个文件 1GB）；
+- 消息写入采用 追加写 模式；
+- 每条消息格式大致如下：
+
+```mathematica
+| TotalSize | MagicCode | BodyCRC | QueueId | Flag | QueueOffset |
+| PhysicalOffset | SysFlag | BornTimestamp | BornHost | StoreTimestamp |
+| StoreHost | ReconsumeTimes | PreparedTransactionOffset |
+| BodyLength | BodyData | TopicLength | Topic | PropertiesLength | Properties |
+```
+
+##### 特点
+
+- 顺序写，写入效率高；
+- 内存映射（mmap）+ PageCache 提升 IO 性能；
+- 消息通过偏移量定位。
+
+#### 二、ConsumeQueue（消息逻辑队列）
+
+##### 职责
+
+- 是 CommitLog 的逻辑索引文件；
+- 记录每个 Topic 下每个 MessageQueue 的消息逻辑顺序；
+- 消费者从 ConsumeQueue 读取消息（而非直接读 CommitLog）；
+- 提供快速定位到 CommitLog 的消息位置。
+
+##### 存储结构
+
+- 每个 Topic 的每个 Queue 对应一个 ConsumeQueue 文件目录；
+- 文件名按逻辑偏移量命名；
+- 每条记录固定长度 20 字节：
+
+```python
+| 8 bytes: CommitLog offset | 4 bytes: Message size | 8 bytes: Tag hashCode |
+```
+
+##### 特点
+
+- 定长结构，随机访问效率高；
+- 按逻辑顺序存储，消费端按偏移量顺序读取；
+- 依赖 CommitLog 的物理偏移量实现消息定位。
+
+#### 三、IndexFile（消息索引文件）
+
+##### 职责
+
+- 提供 按 Key 或时间范围 查询消息的能力；
+- 辅助功能（非消费路径必须），主要用于消息追踪或查询。
+
+##### 存储结构
+
+- 固定大小（默认 400MB）的索引文件；
+- 包含三个主要部分：
+    - Header（索引元信息）；
+    - Hash Slot Table（默认 500w 个槽）；
+    - Index Linked List（索引条目链表）。
+
+每个索引条目结构：
+
+```
+| KeyHash | CommitLogOffset | TimestampDiff | NextIndexOffset |
+```
+
+##### 特点
+
+- 采用 Hash 索引（支持 hash 冲突链表）；
+- 能通过 Key 快速定位消息在 CommitLog 中的物理位置；
+- 支持时间区间查询。
+
+#### 四、三者关系
+
+```
+                ┌───────────────────────────┐
+                │        Producer 写入       │
+                └────────────┬──────────────┘
+                             │
+                             ▼
+                     ┌───────────────┐
+                     │   CommitLog   │  ←  顺序写入消息体
+                     └───────────────┘
+                             │
+        ┌────────────────────┼────────────────────┐
+        ▼                                         ▼
+┌───────────────┐                         ┌─────────────────┐
+│ ConsumeQueue  │  ←  逻辑索引 (QueueOffset→CommitLogOffset) │ IndexFile │ ← Key/时间 索引
+└───────────────┘                         └─────────────────┘
+        │
+        ▼
+消费者按队列顺序读取消息
+```
+
+#### 总结对比表
+
+| 文件类型         | 存储内容                       | 作用           | 写入模式   | 查询方式   | 是否必须  |
+|--------------|----------------------------|--------------|--------|--------|-------|
+| CommitLog    | 消息全量数据                     | 持久化消息主体      | 顺序写    | 物理偏移   | ✅     |
+| ConsumeQueue | CommitLog 偏移、消息大小、tag hash | 消费队列索引       | 顺序写    | 逻辑偏移   | ✅     |
+| IndexFile    | Key → CommitLog 偏移         | 按 Key / 时间查询 | Hash 写 | Hash 查 | ❌（辅助） |
+
 CommitLog（主文件） ←→ ConsumeQueue（二级索引） ←→ IndexFile（辅助索引）
 
 ### 消息刷盘（Flush）机制：同步刷盘、异步刷盘具体是怎么实现的？
@@ -422,7 +532,66 @@ CommitLog（主文件） ←→ ConsumeQueue（二级索引） ←→ IndexFile�
 
 ### Producer 的负载均衡策略有哪些？
 
-### 为什么尽量不要使用全局顺序消息？顺序消息在 RocketMQ 中是如何实现的？
+### 顺序消息在 RocketMQ 中是如何实现的？
+
+RocketMQ 顺序消息分局部顺序和全局顺序：
+
+1. 局部顺序：同一个业务 Key（如订单ID）的消息顺序得到保证，不同 Key 之间可以并发执行。
+2. 全局顺序：所有消息进入同一个队列，消费者单线程消费。（不推荐）
+
+#### 生产者端：按 Key 将消息路由到固定队列
+
+```java
+SendResult sendResult = producer.send(msg, new MessageQueueSelector() {
+    @Override
+    public MessageQueue select(List<MessageQueue> mqs, Message msg, Object arg) {
+        Long orderId = (Long) arg;
+        int index = (int) (orderId % mqs.size());  // 同一订单ID永远进入同一个队列
+        return mqs.get(index);
+    }
+}, orderId);
+```
+
+- RocketMQ 一个 Topic 下有多个 Queue
+- MessageQueueSelector 确保 同一 orderId 进入同一个 queue
+- 同一 queue 的消息顺序一定被保留
+
+#### 消费者端：开启顺序消费模式
+
+使用 MessageListenerOrderly（不是 MessageListenerConcurrently）：
+
+```java
+consumer.registerMessageListener(new MessageListenerOrderly() {
+    @Override
+    public ConsumeOrderlyStatus consumeMessage(List<MessageExt> msgs, ConsumeOrderlyContext context) {
+        for (MessageExt msg : msgs) {
+            System.out.println("顺序消费消息：" + new String(msg.getBody()));
+        }
+        return ConsumeOrderlyStatus.SUCCESS;
+    }
+});
+```
+
+- 每个队列由消费者端的 一个消费线程 顺序处理
+- 同一队列不会被并发消费
+- 多个队列之间仍可以并发
+
+RocketMQ 内部通过 锁队列（Rebalance Lock） 来保证不会多个消费者并发消费同一队列。
+
+MessageQueue 扩容后，原有 hash 规则会失效，顺序无法保证。
+
+虽然不能直接扩容，但可以采用“迁移式扩容”的方式。
+
+1. 暂停发消息
+2. 等待现有队列消费完
+3. 删除 Topic，重新创建（新的 queueSize）
+4. 重新开始发消息
+
+顺序不会破坏，但需要停机窗口。
+
+### 为什么尽量不要使用全局顺序消息？
+
+性能差
 
 ### 重试消息（retry topic）是如何运作的？为什么要创建 %RETRY% 主题？
 
@@ -603,3 +772,51 @@ long latency = System.currentTimeMillis() - msg.getBornTimestamp();
 ### 如何在分布式微服务中利用 MQ 解决一致性与削峰？
 
 ### 多 Region / 多 IDC 部署时如何解决延迟与一致性问题？
+
+## Kafka vs RocketMQ
+
+### Kafka 更适合的场景
+
+| 场景                                  | 说明                                         |
+|-------------------------------------|--------------------------------------------|
+| **大规模日志采集 / 数据管道（Data Pipeline）**   | Kafka 的吞吐量极高（百万级 / 秒），特别适合日志、埋点、指标等连续流式数据。 |
+| **大数据生态（Hadoop / Spark / Flink）集成** | Kafka 在大数据组件中拥有天然支持，是事实上的数据输入标准。           |
+| **高吞吐、弱事务依赖的消息系统**                  | 如果业务不要求严格的消息顺序、可靠事务，Kafka 性能最优。            |
+| **流计算系统的数据输入**                      | Kafka + Flink/Storm 是业界经典组合。               |
+
+### RocketMQ 更适合的场景
+
+| 场景                            | 说明                          |
+|-------------------------------|-----------------------------|
+| **业务系统中的可靠消息（如订单、支付、库存）**     | RocketMQ 提供强一致性、严格顺序消息、低延迟。 |
+| **需要消息事务（分布式事务）**             | RocketMQ 原生支持事务消息，是业界最成熟实现。 |
+| **需要丰富的消息特性（消息轨迹、定时消息、延时消息）** | RocketMQ 对业务友好的特性更多。        |
+| **云原生、轻量化部署**                 | RocketMQ 本身更易部署、运维成本低。      |
+
+### 核心差异总结
+
+| 对比项             | Kafka                | RocketMQ             |
+|-----------------|----------------------|----------------------|
+| **性能**          | 超高吞吐，GB/s 级别         | 吞吐高，但略低于 Kafka       |
+| **消息模型**        | Pub/Sub              | Pub/Sub（支持 Tag 精确过滤） |
+| **消息顺序性**       | Partition 层级顺序，可控性一般 | 原生支持严格顺序             |
+| **消息事务**        | 支持但复杂度高、使用少          | 原生事务消息实现成熟           |
+| **延时消息 / 定时消息** | 无（需外部实现）             | 原生支持多级延时             |
+| **消息堆积能力**      | 强                    | 强                    |
+| **存储机制**        | 文件系统顺序写 + PageCache  | 类似，但更灵活、延迟更低         |
+| **大数据生态**       | 完美融入                 | 较弱                   |
+| **部署复杂度**       | 较高（Zookeeper）        | 较低                   |
+| **典型使用**        | 日志、流计算               | 业务事件、金融系统            |
+
+### 实际项目案例
+
+1. 电商系统（订单、支付）更适合 RocketMQ
+2. 大型互联网 APP 行为埋点，更适合 Kafka
+3. 跨服务的延迟触发任务（短信、订单超时）更适合 RocketMQ
+4. 公司内部的用户行为流 + 离线分析，更适合 Kafka
+5. 银行/金融行业微服务事件驱动，更适合 RocketMQ
+
+总结一句话：
+
+- Kafka：追求吞吐、数据流、大数据处理
+- RocketMQ：追求可靠、顺序、事务、延迟消息的业务场景

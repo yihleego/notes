@@ -519,8 +519,31 @@ Kafka 只保证每个分区内部的消息是有序的（FIFO：先写先读）�
 Kafka 仅保证分区内的顺序性，Consumer 端要做到顺序消费，需满足以下三点：
 
 1. 同一分区只能被一个 Consumer 消费；
-2. Consumer 对该分区的消息按顺序处理（单线程）；
-3. 消息的业务顺序通过 Key 控制分区映射。
+2. Consumer 对该分区的消息按顺序处理（单线程），处理后手动提交 offset；
+3. 消息的业务顺序通过 Key 控制分区映射，例如：
+    - 按用户顺序消费（同一个 userId）
+    - 按订单顺序消费（同一个 orderId）
+    - 按设备顺序消费（同一个 deviceId）
+
+▶ Producer 配置
+
+```properties
+# 所有副本都同步成功才返回
+acks=all
+# 启用幂等
+enable.idempotence=true
+# 禁止多个请求并发，这样才能保持严格顺序
+max.in.flight.requests.per.connection=1
+```
+
+▶ Consumer 配置
+
+```properties
+# 手动提交
+enable.auto.commit=false
+# 可选（确保每次处理一个）
+max.poll.records=1
+```
 
 ### 你如何处理 Consumer 延迟（lag）快速增长的问题？
 
@@ -829,131 +852,190 @@ kafka-run-class kafka.tools.GetOffsetShell \
 
 ### 如何设计一个百万 TPS 的 Kafka 消息系统？
 
-设计一个 百万 TPS（Transactions Per Second） 的 Kafka 消息系统，需要从 架构设计、硬件配置、Kafka 调优、网络设计、以及消息模型设计 等多个层面协同优化。下面是一个系统性思路。
+使用Kafka日志收集，支撑1百万TPS，通过下面假设计算所需要的每台服务器所需要的CPU、内存和硬盘，服务器数量，网络带宽。
+1. 单条消息大小1KB左右
+2. ACK模式使用acks=1至少leader副本写入成功
+3. 副本数量3
+4. Topic数量10个作用
+5. 计算所需要的partition
 
-#### 一、总体架构设计思路
+#### 前置条件（按你的输入）
 
-1. **分布式集群架构**
-    - Kafka 本身是水平可扩展的，通过 **Broker 分片 + Partition 分区** 实现高并发。
-    - 设计时需根据目标吞吐量（100 万 TPS）反推集群规模。
-    - 一般来说：
-        - 1 台高配 Broker（64 核 CPU、256 GB 内存、NVMe SSD）可稳定支撑 10~20 万 TPS。
-        - 100 万 TPS 需 **5~10 台 Broker** 起步，视消息大小而定。
+- 吞吐量：1,000,000 条/秒（1M TPS）
+- 消息大小：1 KB
+- ACKS=1（Replica 只保证 leader 写入成功）
+- 副本因子：3
+- Topic 数：10 个
+- 计算：需要 Partition 数量、单机 CPU/内存/磁盘、服务器数量、网络带宽
 
-2. **多主题分区**
-    - Kafka 的吞吐能力来自 **分区（Partition）** 并行。
-    - 每个 Partition 通常只能由单个 consumer thread 消费，因此要足够多的分区。
-    - 经验值：每个分区可支撑 10k ~ 50k TPS。
-    - → 为百万 TPS，需要约 **50~200 个分区**。
+#### 1. 总吞吐量换算
 
-3. **高并发生产者（Producer Pool）**
-    - 使用异步批量发送（`linger.ms`, `batch.size`）来聚合写入。
-    - 通过多线程或多实例部署 Producer，打满分区的发送带宽。
+##### 消息大小 × TPS
 
-4. **多消费者并行消费**
-    - 消费端采用 **多 Consumer Group 或分区级别多线程**。
-    - 避免单一消费者成为瓶颈。
+```
+1 KB × 1,000,000 = 1,000,000 KB/s = ~1 GB/s（入站）
+```
 
-#### 二、Kafka 集群配置与优化
+##### 考虑副本因子：3
 
-1. 硬件层面
+Kafka 的网络流量包括：
 
-| 层级  | 推荐配置                       |
-|-----|----------------------------|
-| CPU | ≥ 32 核（高主频）                |
-| 内存  | ≥ 128 GB（page cache 对性能关键） |
-| 存储  | NVMe SSD（至少 2 GB/s 顺序写）    |
-| 网络  | 25 Gbps 以太网（低延迟、高带宽）       |
+- 写入 Leader：1 GB/s
+- Leader → Follower 复制：2 GB/s
 
-2. Kafka Broker 参数
+→ 集群总出入网：3 GB/s ≈ 24 Gbps
 
-| 参数                            | 建议值           | 说明         |
-|-------------------------------|---------------|------------|
-| `num.network.threads`         | 8~16          | 网络 I/O 线程  |
-| `num.io.threads`              | 16~32         | 磁盘 I/O 线程  |
-| `socket.send.buffer.bytes`    | 1MB           | 发送缓冲区      |
-| `socket.receive.buffer.bytes` | 1MB           | 接收缓冲区      |
-| `socket.request.max.bytes`    | 100MB+        | 单请求最大字节数   |
-| `num.replica.fetchers`        | 4+            | 副本同步线程数    |
-| `log.segment.bytes`           | 1~2GB         | Segment 大小 |
-| `log.retention.hours`         | 按业务需求调整       | 保留策略       |
-| `log.cleaner.enable`          | false（写多读少场景） | 减少 GC 压力   |
+#### 2. Partition 数量估算
 
-3. JVM 调优
+Kafka 单 partition 可靠吞吐量（常见集群参考值）：
 
-- `-Xms` = `-Xmx` = 16~32 GB，避免堆自动扩缩。
-- `G1GC` 或 ZGC 垃圾回收器。
-- 禁止 swap：`vm.swappiness=0`。
+| 服务器性能                 | 单 Partition 吞吐 |
+|-----------------------|----------------|
+| 中端服务器（NVMe SSD）       | 30–50 MB/s     |
+| 高端服务器（NVMe + 高主频 CPU） | 80–100 MB/s    |
 
-#### 三、生产者（Producer）优化
+百万 TPS（1 GB/s）需要 partition 数：
 
-| 参数                                      | 推荐配置             | 说明       |
-|-----------------------------------------|------------------|----------|
-| `acks`                                  | 1 或 0            | 减少确认等待   |
-| `batch.size`                            | 64KB~512KB       | 批量聚合发送   |
-| `linger.ms`                             | 5~10ms           | 等待批次聚合   |
-| `compression.type`                      | `lz4` 或 `snappy` | 提升吞吐降低带宽 |
-| `max.in.flight.requests.per.connection` | 5+               | 并发请求数    |
+##### 假设单 partition 50 MB/s（合理）
 
-并使用 **异步发送 + 回调机制**，避免阻塞主线程。
+```
+1 GB/s ÷ 50 MB/s ≈ 20 partitions
+```
 
-#### 四、消费者（Consumer）优化
+但这是 单 topic。
 
-- 使用 **多线程或多实例** 并行消费。
-- `fetch.min.bytes`、`fetch.max.wait.ms` 调大，增加批量效率。
-- `max.poll.records` 调高，提升单次拉取量。
-- 如果消费端逻辑较重，建议：
-    - 使用异步处理队列；
-    - 消费与业务处理解耦（可配合异步任务队列）。
+你有 10 个 topic，假设均匀负载：
 
-#### 五、消息模型与序列化
+```
+每 Topic：100,000 msg/s ≈ 100 MB/s
+100 MB/s ÷ 50 MB/s ≈ 2 partitions
+```
 
-1. **消息大小**
-    - Kafka 吞吐量与消息大小强相关。
-    - 建议单消息 ≤ 1 KB。
-    - 如果消息较大，可通过批量压缩、分块写入。
+但为了保证：
 
-2. **序列化方式**
-    - 使用高性能序列化框架：**Avro / Protobuf / Kryo**。
-    - 避免 JSON。
+- rebalance 空间
+- leader/follower 均衡
+- 后续扩容
 
-3. **压缩算法**
-    - 生产端启用压缩：`compression.type=lz4`。
-    - 效果：压缩比 3~5x，吞吐提升 2~3 倍。
+> 推荐每 Topic 至少 20 partitions
+> 荐总 Partition 数量：100~200 partitions
 
-#### 六、网络与操作系统优化
+#### 3. Kafka Broker 机器配置估算（百万 TPS）
 
-- 网络参数：
-  ```
-  net.core.somaxconn=1024
-  net.ipv4.tcp_tw_reuse=1
-  net.ipv4.tcp_fin_timeout=15
-  net.ipv4.tcp_max_syn_backlog=4096
-  ```
-- 使用独立网卡分离 **生产流量 / 消费流量 / 副本同步流量**。
-- 启用 `jumbo frames` (MTU=9000) 以减少协议开销。
+##### 每台服务器合理吞吐能力
 
-#### 七、监控与扩展
+通常高性能 Kafka 节点可稳定处理：
 
-- 使用 **Prometheus + Grafana** 监控：
-    - 吞吐量（bytes/sec）
-    - ISR（同步副本）状态
-    - 磁盘利用率
-    - 网络流量
-    - 消费延迟（consumer lag）
-- 自动扩容策略：
-    - 分区可动态扩容；
-    - 支持 Broker 动态加入。
+- 200–300 MB/s 入站
+- 副本复制后 600–900 MB/s 网络 I/O
 
-#### 八、性能实测基准（经验数据）
+##### 1,000 MB/s ÷ 250 MB/s ≈ 4 台 Leader 足够
 
-| 环境                        | 配置             | 吞吐量（TPS） |
-|---------------------------|----------------|----------|
-| 3 台 Broker（64C256G, NVMe） | 3 主题 × 30 分区   | ~300k    |
-| 6 台 Broker                | 6 主题 × 60 分区   | ~650k    |
-| 10 台 Broker               | 10 主题 × 100 分区 | \>1M     |
+但还要考虑：
 
-> 注意：实际性能取决于消息大小、ack 模式、磁盘和网络性能。
+- Replica follower 压力
+- 冗余
+- 负载均衡
+
+> 推荐 Kafka Server 数量：6~9 台 Broker
+
+#### 4. 单台服务器 CPU / 内存 / 磁盘 / 网络推荐规格
+
+为了支撑高吞吐，机器配置建议如下：
+
+##### CPU
+
+Kafka 写入吞吐非常依赖 CPU：
+
+```
+16–32 核（2.7GHz+）
+```
+
+百万 TPS 下强烈建议：
+
+```
+32 核 CPU
+```
+
+##### 内存（主要用于页缓存 + Kafka 堆）
+
+Kafka Heap 通常设置：
+
+```
+8–16 GB
+```
+
+页缓存越大越好：
+
+```
+推荐：64–128 GB RAM
+```
+
+##### 磁盘（使用 NVMe SSD）
+
+吞吐要求：至少能持续写 250 MB/s+
+
+每台服务器一天日志：
+
+```
+每秒：250 MB/s
+每天： ~21 TB
+按保留 3 天需要 ~60 TB（副本算在集群内而非单机）
+```
+
+单台存储需求取决于是否保留长日志，可参考：
+
+```
+4 × NVMe SSD, 每块 3.8–7.6 TB
+（总 15–30 TB 原始空间）
+```
+
+##### 网络带宽
+
+网络是最重要的资源之一：
+
+入站 + 副本复制总带宽（每机分摊）
+
+百万 TPS → 集群总带宽需求约 24 Gbps  
+平均到 6–9 台机器：
+
+```
+每台大约 3–5 Gbps 网络负载
+```
+
+因此推荐：
+
+```
+2 × 25GbE 网卡
+或 100GbE 单网卡（高性能场景）
+```
+
+#### 5. 汇总表（百万 TPS Kafka 集群）
+
+| 项目           | 建议                        |
+|--------------|---------------------------|
+| Partition 数量 | 100–200 partitions        |
+| Broker 数量    | 6–9 台                     |
+| CPU          | 32 核（至少 2.7GHz+）          |
+| 内存           | 64–128 GB                 |
+| 磁盘           | 15–30 TB NVMe SSD（4×NVMe） |
+| 网络           | 25GbE ×2 或 100GbE         |
+| Topic        | 10                        |
+| 副本因子         | 3                         |
+| 消息大小         | 1 KB                      |
+| TPS          | 1,000,000 条/秒             |
+
+#### 6. 为什么需要这么多机器？
+
+Kafka 实际是网络与磁盘吞吐受限：
+
+- 副本因子 = 3 → 实际写入 *3 倍* 数据
+- 1GB/s 输入 → Leader 写入 + 复制 → 集群总 24Gbps
+- 单机无法承担全部复制与 IO
+
+因此横向扩展是必须的。
+
+以上计算是通用估算，真实部署需通过基准测试（benchmark）校准。
 
 ### 如何保证消息跨数据中心同步的一致性？
 

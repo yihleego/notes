@@ -1566,6 +1566,24 @@ public class CompositeEncoder extends MessageToByteEncoder<List<ByteBuf>> {
 
 ### Netty 内部是如何做到线程安全的？
 
+Netty 的设计保证了每个 ChannelPipeline 的 I/O 操作（包括 encode()）在 同一个 EventLoop 线程 中串行执行。
+
+无论在哪个线程调用（外部线程池也行），Netty 的实现都会先判断当前线程是否是负责这个 Channel 的 EventLoop 线程：
+
+```java
+if (inEventLoop()) {
+    // 当前线程就是负责此 Channel 的 EventLoop
+    // 直接执行 pipeline.write()
+} else {
+    // 否则提交一个任务到 EventLoop 的任务队列中
+    eventLoop.execute(() -> pipeline.write(...));
+}
+```
+
+也就是说，所有对同一个 Channel 的写操作最终都会被序列化提交到该 Channel 对应的单一 EventLoop 线程上执行。
+
+因此，哪怕外部线程池并发调用 ctx.write()，它们最终都会排队在同一个 EventLoop 任务队列里，按顺序执行。
+
 ## TCP、连接管理与心跳机制
 
 ### Netty 如何处理 TCP 粘包拆包问题？
@@ -1591,7 +1609,6 @@ public class CompositeEncoder extends MessageToByteEncoder<List<ByteBuf>> {
     - 主要瓶颈在于频繁创建和销毁 Channel 与 TCP 连接。
     - 可通过连接复用（如 HTTP Keep-Alive、连接池）或对象池化（复用 ByteBuf、EventLoop、ChannelHandler）减少开销。
     - 若必须短连接，建议异步关闭、延迟释放资源，并使用 PooledByteBufAllocator 提高内存回收效率。
-    - 走 HTTP 服务
 2. 大量长连接
     - 重点是减少内存占用与优化 I/O 调度。
     - 采用单线程多通道模型（EventLoopGroup + 非阻塞 Selector）实现高并发。

@@ -319,7 +319,72 @@ Kafka 会使用一种**轮询（Round-Robin）**机制，但带有缓存优化�
 
 ### acks=0/1/all 的差异是什么？常见的可靠性配置组合有哪些？
 
+#### acks 的三种取值
+
+| acks 值          | 含义                                                | 数据可靠性 | 延迟    | 丢数据风险                  |
+|-----------------|---------------------------------------------------|-------|-------|------------------------|
+| **0**           | 生产者**不等待**任何服务器确认消息是否成功写入。                        | ❌ 极低  | ✅ 最低  | ✅ 极高                   |
+| **1**           | 生产者等待 **leader 分区副本**写入成功确认，但**不等待 follower 同步**。 | ⚠️ 中等 | ⚠️ 较低 | ⚠️ 可能丢数据（leader 宕机未同步） |
+| **all**（或 `-1`） | 生产者等待 **所有 ISR（in-sync replicas）副本**都确认写入成功。      | ✅ 最高  | ❌ 较高  | ❌ 最低（除非所有副本都挂掉）        |
+
+#### 可靠性机制的补充配置
+
+Kafka 的可靠性不仅由 acks 决定，还与以下参数组合使用：
+
+| 配置项                                         | 含义                  | 推荐设置（高可靠场景）             |
+|---------------------------------------------|---------------------|-------------------------|
+| **`retries`**                               | 发送失败的重试次数           | 较高（如 3～10）              |
+| **`enable.idempotence`**                    | 启用幂等生产者，避免重复消息      | `true`                  |
+| **`max.in.flight.requests.per.connection`** | 每个连接上允许未确认请求的最大数量   | ≤5（启用幂等时 Kafka 会自动限制）   |
+| **`min.insync.replicas`**                   | ISR 中最少要有多少副本确认才算成功 | 通常设为 `2`（配合 `acks=all`） |
+| **`replication.factor`**                    | 分区副本数               | ≥3（生产环境标准）              |
+
+#### 常见配置组合与使用场景
+
+| 场景               | 示例配置                                                       | 可靠性   | 性能     | 说明                            |
+|------------------|------------------------------------------------------------|-------|--------|-------------------------------|
+| **低延迟日志收集**      | `acks=0`                                                   | ❌ 最低  | ✅ 极高   | 适用于丢部分数据可接受的场景（如 clickstream） |
+| **一般业务日志**       | `acks=1, retries=3`                                        | ⚠️ 中等 | ⚠️ 较好  | 常见默认配置；可能在 leader 崩溃时丢数据      |
+| **关键业务数据（推荐）**   | `acks=all, min.insync.replicas=2, enable.idempotence=true` | ✅ 最高  | ❌ 较高延迟 | 保证消息不丢不重（强一致性）                |
+| **高可靠流处理/交易类数据** | `acks=all, retries>3, replication.factor≥3`                | ✅✅ 极高 | ⚠️ 较慢  | 企业级高可用配置                      |
+
 ### 如何处理 Producer 幂等性？幂等模式下仍有哪些异常场景？
+
+#### 背景问题
+
+在 Kafka 中，如果生产者发送消息后没有收到确认（ack），可能会自动重试。这会导致：
+
+- 消息被多次写入同一分区；
+- 消费者可能读到重复的数据。
+
+这在金融交易、订单系统等对“唯一性”要求高的场景中是不可接受的。
+
+#### 实现原理
+
+Kafka 从 0.11 版本开始引入幂等生产者功能。其核心机制包括：
+
+1. Producer ID（PID）
+   每个生产者实例启动时会被分配一个唯一的 PID。
+2. Sequence Number（序列号）
+   每个消息在发送时带有一个递增的序列号。
+3. Broker 去重逻辑
+   Broker（Kafka 服务器端）会根据 (PID, Partition, SequenceNumber) 判断消息是否重复。
+   如果发现相同的组合出现多次，则丢弃重复的消息。
+
+#### 异常场景
+
+1. 仅在单个分区内生效
+   幂等机制的 (PID, Partition, SequenceNumber) 唯一性只在单分区内判断。
+   如果同一条逻辑消息被发送到不同分区（或不同主题），Kafka 并不会认为它们重复。
+2. 生产者重启后 PID 失效
+   每个生产者实例重启后，会分配新的 Producer ID (PID)。
+   旧的 PID 对应的幂等状态就丢失了，Broker 认为是一个新的生产者。
+3. 消息可能丢失（幂等不保证 Exactly Once）
+   幂等机制防止“多写”，但不保证消息“必达”：
+   如果 acks=0 或 acks=1，Broker 宕机可能导致数据丢失；
+   如果启用了幂等但没有合适的重试策略，仍可能丢数据。
+4. 乱序问题
+   虽然幂等机制要求 max.in.flight.requests.per.connection <= 5，但当启用多线程或多个分区发送时，仍可能出现消息顺序错乱。
 
 ### Producer 批量发送（batch.size、linger.ms）如何影响吞吐？
 
@@ -335,32 +400,26 @@ Kafka 会使用一种**轮询（Round-Robin）**机制，但带有缓存优化�
 
 ### Rebalance 发生的常见原因是什么？如何减少 Rebalance？
 
-在分布式系统（例如 Kafka、Flink、Elasticsearch、Consul、微服务集群等）中，Rebalance（再均衡） 通常指集群中某些节点、分区或任务的负载被重新分配。Rebalance 既是为了维持系统的健康与均衡，也是潜在的性能隐患。以下是详细分析：
+Kafka 的 Rebalance（再均衡） 是消费者组（Consumer Group）在成员或分区分配发生变化时的一种自动协调行为。它会导致分区的重新分配，从而影响消息消费的连续性。下面是常见触发 Rebalance 的原因及解释：
 
 #### 一、Rebalance 发生的常见原因
 
 1. 成员变化
-
-这是最常见的触发原因：
-
-- 消费者组成员变化：新消费者加入或老消费者离开。
-- 节点故障或恢复：节点宕机、重启、网络闪断导致组协调器检测到心跳丢失。
-- 滚动升级：应用或 Broker 重启过程中，消费者临时离组。
-
+   这是最常见的触发原因：
+    - 消费者组成员变化：新消费者加入或老消费者离开。
+    - 节点故障或恢复：节点宕机、重启、网络闪断导致组协调器检测到心跳丢失。
+    - 滚动升级：应用或 Broker 重启过程中，消费者临时离组。
+   
 2. 元数据变化
-
-当集群拓扑或主题配置变更时，也可能触发 Rebalance：
-
-- 新建或删除 Topic。
-- Topic 的 分区数增加。
-- Broker 下线或上线。
-- Partition Leader 发生迁移。
-
+   当集群拓扑或主题配置变更时，也可能触发 Rebalance：
+    - 新建或删除 Topic。
+    - Topic 的 分区数增加。
+    - Broker 下线或上线。
+    - Partition Leader 发生迁移。
+    
 3. 心跳或 Session 过期
-
-消费者或节点未在规定时间内向协调器发送心跳，协调器认为该成员失效，从而触发再平衡。
-
-Kafka 中通过 session.timeout.ms 和 heartbeat.interval.ms 控制检测机制。
+   消费者或节点未在规定时间内向协调器发送心跳，协调器认为该成员失效，从而触发再平衡。
+   Kafka 中通过 session.timeout.ms 和 heartbeat.interval.ms 控制检测机制。
 
 4. 配置或协调器异常
     - Coordinator 重新选举。
@@ -574,13 +633,86 @@ Kafka 通过 “幂等生产者 + 事务性写入 + 原子提交 offset” 实�
 
 ### Kafka 事务（Transaction）如何实现？事务消息在内部是如何写入的？
 
+Kafka 的事务主要解决两个问题：
+1.	生产者的幂等性：确保同一条消息在重试时不会被重复写入。
+2.	跨分区、跨 topic 的原子性：确保一组消息要么全部成功（commit），要么全部失败（abort）。
+
+例如，生产者向多个分区发送消息，希望要么全部成功提交，要么都不生效，这就需要事务。
+
 ### 消息幂等性与事务的差异是什么？
 
 ## Broker 内部机制
 
 ### Kafka 的高水位（HW）、LEO、LSO 分别代表什么？
 
-### Follower 是如何同步 Leader 的？为什么需要 ISR？
+#### HW（High Watermark）
+
+HW 表示“高水位线”，即 所有副本都同步到的最大 offset。
+消费者（Consumer）只能消费到 HW 之前的消息（包括 HW 对应的 offset）。
+举例：
+
+- Leader 的日志写到了 offset 100（LEO = 100）
+- Follower 只同步到 offset 95
+- 那么 HW = 95
+
+#### LEO（Log End Offset）
+
+LEO 表示“日志末端偏移量”，即 下一条待写入消息的 offset。
+换句话说，LEO 指向日志中“下一个将被写入的位置”，而不是最后一条消息的 offset。
+
+举例：
+
+- 如果当前分区中有 offset 为 0～99 的消息，
+- 那么 LEO = 100（下一个要写的 offset）。
+
+#### LSO（Last Stable Offset）
+
+LSO 表示“最后稳定偏移量”，主要在 启用事务（transaction） 的场景下使用。
+它指的是：所有事务性消息中，最后一个已经提交（committed）或中止（aborted） 的事务之前的最大 offset。
+
+作用：
+
+- 对事务性消费者（隔离级别为 read_committed）来说，只能读取到 LSO 之前的消息。
+- 防止消费到未提交的事务数据
+
+### Follower 如何同步 Leader
+
+Kafka 的每个 Partition（分区） 都有一个 Leader 副本和若干个 Follower 副本。Leader 负责处理所有读写请求，而 Follower 仅从 Leader 拉取数据，保持与其同步。
+
+1. Leader 写入数据
+   Producer 把消息发送给 Leader 副本，Leader 把数据写入本地日志（log segment）。
+2. Follower 拉取数据
+   每个 Follower 都会周期性地向 Leader 发送 Fetch 请求（类似消费者的拉取），请求从上次同步的位置开始获取新的数据。
+3. Follower 写入日志
+   Follower 收到消息后，将其追加写入自己的本地日志文件中，并更新自己的 High Watermark（高水位）。
+4. Leader 维护同步状态
+   Leader 跟踪每个 Follower 的最新 offset（即同步到的位置）。只有当某条消息被所有 “活跃的、同步中的 Follower” 成功复制后，Leader 才会将这条消息标记为 “已提交”（committed）。
+
+### 为什么需要 ISR（In-Sync Replica）
+
+ISR（同步副本集合）是 Kafka 中用来保证 数据一致性 与 可用性 的机制。
+
+1. ISR 定义
+
+   ISR 是一个列表，包含了：
+    - Leader 自身；
+    - 所有与 Leader 同步状态的 Follower（延迟在可接受范围内）。
+
+   换句话说，ISR 表示当前 “可靠同步”的副本集合。
+
+2. ISR 的作用
+
+   （1）保证数据一致性
+   Kafka 的 “已提交消息” 只有当 ISR 中的所有副本都复制了该消息后，才会对消费者可见。
+   这样即使 Leader 宕机，新的 Leader（从 ISR 中选出）也一定拥有全部已提交的数据，避免数据丢失。
+
+   （2）控制副本滞后
+   Follower 如果落后太多（超出 replica.lag.time.max.ms 配置时间），会被移出 ISR。
+   这样可以防止因为慢副本导致的系统整体性能下降，也确保 ISR 中的副本足够“新”。
+
+   （3）Leader 选举安全
+   当 Leader 崩溃时，Kafka 只会从 ISR 中选出新的 Leader。
+   这能确保新 Leader 至少包含所有已提交的数据，从而保证高一致性（类似于分布式系统的 “安全选举” 原则）。
 
 ### Replica Lag 较大时系统如何处理？
 
@@ -596,9 +728,80 @@ Kafka 通过 “幂等生产者 + 事务性写入 + 原子提交 offset” 实�
 
 ### Kafka 如何扩容 Topic Partition？扩容后的消息顺序如何保证？
 
-### Kafka 集群扩容 Broker 时需要注意哪些问题？
+1. 扩容方式
+   通过命令 kafka-topics --alter --topic <topic> --partitions <new_count> 增加分区数量。Kafka 不会重新分配已有消息，只是增加新的空分区，供新写入数据使用。
+2. 分区映射变化
+   Producer 的分区选择逻辑通常是 partition = hash(key) % partition_count。扩容后 partition_count 变化，key 到分区的映射会改变，导致同一 key 的后续消息可能落入不同分区。
+3. 消息顺序保证
+   - 同分区内顺序仍然保证：Kafka 的顺序语义是“分区内有序”，这一点不变。
+   - 跨分区顺序无法保证：若扩容后 key 映射变动，同一 key 的新旧消息可能分布在不同分区，从而丢失全局或 per-key 顺序。
+   - 要保持顺序：必须使用稳定的 key 或自定义分区器，确保同一 key 始终映射到相同分区（可在应用层做 hash 映射缓存）。
+
+### Kafka 扩容 Broker 时需要注意什么？可能会导致什么问题
+
+#### 扩容过程中的注意事项
+
+1. 增加 Broker 并不会自动分配数据
+   - 新加入的 Broker 默认不会有任何分区或副本。
+   - 必须通过 kafka-reassign-partitions 工具 或 自动负载均衡工具（如 Cruise Control） 来迁移分区。
+2. 分区迁移会带来网络与磁盘负载
+   - 在迁移过程中会大量的网络 I/O（Broker 间复制）与磁盘写入。
+   - 若迁移过快，可能会影响线上生产消费性能。
+   - 建议使用 --throttle 参数限制迁移带宽（如每 Broker 限速 50MB/s）。
+3. 迁移过程中副本状态监控
+   - 持续观察 UnderReplicatedPartitions、OfflinePartitionsCount 等指标。
+   - 如果迁移中断（Broker 挂掉或网络闪断），要重新执行或恢复迁移任务。
+4. Leader 分布优化
+   - 迁移完成后，建议执行一次 Leader rebalancing（kafka-preferred-replica-election）以均衡负载。
+
+#### 可能出现的问题
+
+1. 数据与负载不均
+   - 若分区未重新分配，新 Broker 长期空闲，老节点仍然高负载。
+   - 可能导致部分节点磁盘满、延迟高。
+2. 性能波动
+   - 分区迁移期间，Broker 会进行大量数据复制，影响网络与磁盘性能。
+   - 若无速率限制，可能导致生产延迟增加、消费者滞后。
+3. Leader 过度集中
+   - 若迁移后未重新选举 Leader，可能导致部分 Broker 承担过多请求。
+4. 副本不同步风险
+   - 磁盘或网络压力过大可能造成 ISR 收缩，影响高可用性。
+5. 版本兼容问题
+   - 若新增 Broker Kafka 版本与集群版本不一致，可能导致协议不兼容或控制器异常。
 
 ### 如何判断某个 partition 是热点分区？如何优化？
+
+#### 查看各分区的消息流量差异
+
+- 每秒消息生产速率 (BytesInPerSec, MessagesInPerSec)
+- 每秒消息消费速率 (BytesOutPerSec, MessagesOutPerSec)
+
+```
+kafka-run-class kafka.tools.GetOffsetShell \
+  --broker-list <broker_list> \
+  --topic <topic_name> --time -1
+```
+
+#### 检查生产端（Producer）的分区分配逻辑
+
+热点分区常由非均匀的分区策略引起，例如：
+
+- 使用 key 进行分区，但 key 分布极不均匀；
+- 使用 DefaultPartitioner 时某些 key 值过于集中；
+- 或使用自定义 partitioner 时逻辑错误。
+
+可以通过日志或埋点统计 key→partition 的映射分布。
+
+#### 优化热点分区的策略
+
+1. 优化分区策略（Producer 端）
+    - 随机分区（不指定 key）：让 Kafka 自动均衡。
+    - 哈希分区但注意 key 均匀性：确认 key 的取值分布是否接近 uniform。
+    - 自定义分区器：如果 key 无法均匀分布，可在分区器中引入随机扰动，如：`partition = (key.hashCode() + ThreadLocalRandom.current().nextInt(n)) % numPartitions;`
+2. 增加分区数量
+   适用于热点集中在少量分区的情况
+3. 重新分配分区（Rebalance）
+   如果热点导致部分 broker 负载过重，可使用 kafka-reassign-partitions.sh
 
 ### Kafka 的常用监控指标有哪些？
 
@@ -625,6 +828,132 @@ Kafka 通过 “幂等生产者 + 事务性写入 + 原子提交 offset” 实�
 ## 常见系统设计题
 
 ### 如何设计一个百万 TPS 的 Kafka 消息系统？
+
+设计一个 百万 TPS（Transactions Per Second） 的 Kafka 消息系统，需要从 架构设计、硬件配置、Kafka 调优、网络设计、以及消息模型设计 等多个层面协同优化。下面是一个系统性思路。
+
+#### 一、总体架构设计思路
+
+1. **分布式集群架构**
+    - Kafka 本身是水平可扩展的，通过 **Broker 分片 + Partition 分区** 实现高并发。
+    - 设计时需根据目标吞吐量（100 万 TPS）反推集群规模。
+    - 一般来说：
+        - 1 台高配 Broker（64 核 CPU、256 GB 内存、NVMe SSD）可稳定支撑 10~20 万 TPS。
+        - 100 万 TPS 需 **5~10 台 Broker** 起步，视消息大小而定。
+
+2. **多主题分区**
+    - Kafka 的吞吐能力来自 **分区（Partition）** 并行。
+    - 每个 Partition 通常只能由单个 consumer thread 消费，因此要足够多的分区。
+    - 经验值：每个分区可支撑 10k ~ 50k TPS。
+    - → 为百万 TPS，需要约 **50~200 个分区**。
+
+3. **高并发生产者（Producer Pool）**
+    - 使用异步批量发送（`linger.ms`, `batch.size`）来聚合写入。
+    - 通过多线程或多实例部署 Producer，打满分区的发送带宽。
+
+4. **多消费者并行消费**
+    - 消费端采用 **多 Consumer Group 或分区级别多线程**。
+    - 避免单一消费者成为瓶颈。
+
+#### 二、Kafka 集群配置与优化
+
+1. 硬件层面
+
+| 层级  | 推荐配置                       |
+|-----|----------------------------|
+| CPU | ≥ 32 核（高主频）                |
+| 内存  | ≥ 128 GB（page cache 对性能关键） |
+| 存储  | NVMe SSD（至少 2 GB/s 顺序写）    |
+| 网络  | 25 Gbps 以太网（低延迟、高带宽）       |
+
+2. Kafka Broker 参数
+
+| 参数                            | 建议值           | 说明         |
+|-------------------------------|---------------|------------|
+| `num.network.threads`         | 8~16          | 网络 I/O 线程  |
+| `num.io.threads`              | 16~32         | 磁盘 I/O 线程  |
+| `socket.send.buffer.bytes`    | 1MB           | 发送缓冲区      |
+| `socket.receive.buffer.bytes` | 1MB           | 接收缓冲区      |
+| `socket.request.max.bytes`    | 100MB+        | 单请求最大字节数   |
+| `num.replica.fetchers`        | 4+            | 副本同步线程数    |
+| `log.segment.bytes`           | 1~2GB         | Segment 大小 |
+| `log.retention.hours`         | 按业务需求调整       | 保留策略       |
+| `log.cleaner.enable`          | false（写多读少场景） | 减少 GC 压力   |
+
+3. JVM 调优
+
+- `-Xms` = `-Xmx` = 16~32 GB，避免堆自动扩缩。
+- `G1GC` 或 ZGC 垃圾回收器。
+- 禁止 swap：`vm.swappiness=0`。
+
+#### 三、生产者（Producer）优化
+
+| 参数                                      | 推荐配置             | 说明       |
+|-----------------------------------------|------------------|----------|
+| `acks`                                  | 1 或 0            | 减少确认等待   |
+| `batch.size`                            | 64KB~512KB       | 批量聚合发送   |
+| `linger.ms`                             | 5~10ms           | 等待批次聚合   |
+| `compression.type`                      | `lz4` 或 `snappy` | 提升吞吐降低带宽 |
+| `max.in.flight.requests.per.connection` | 5+               | 并发请求数    |
+
+并使用 **异步发送 + 回调机制**，避免阻塞主线程。
+
+#### 四、消费者（Consumer）优化
+
+- 使用 **多线程或多实例** 并行消费。
+- `fetch.min.bytes`、`fetch.max.wait.ms` 调大，增加批量效率。
+- `max.poll.records` 调高，提升单次拉取量。
+- 如果消费端逻辑较重，建议：
+    - 使用异步处理队列；
+    - 消费与业务处理解耦（可配合异步任务队列）。
+
+#### 五、消息模型与序列化
+
+1. **消息大小**
+    - Kafka 吞吐量与消息大小强相关。
+    - 建议单消息 ≤ 1 KB。
+    - 如果消息较大，可通过批量压缩、分块写入。
+
+2. **序列化方式**
+    - 使用高性能序列化框架：**Avro / Protobuf / Kryo**。
+    - 避免 JSON。
+
+3. **压缩算法**
+    - 生产端启用压缩：`compression.type=lz4`。
+    - 效果：压缩比 3~5x，吞吐提升 2~3 倍。
+
+#### 六、网络与操作系统优化
+
+- 网络参数：
+  ```
+  net.core.somaxconn=1024
+  net.ipv4.tcp_tw_reuse=1
+  net.ipv4.tcp_fin_timeout=15
+  net.ipv4.tcp_max_syn_backlog=4096
+  ```
+- 使用独立网卡分离 **生产流量 / 消费流量 / 副本同步流量**。
+- 启用 `jumbo frames` (MTU=9000) 以减少协议开销。
+
+#### 七、监控与扩展
+
+- 使用 **Prometheus + Grafana** 监控：
+    - 吞吐量（bytes/sec）
+    - ISR（同步副本）状态
+    - 磁盘利用率
+    - 网络流量
+    - 消费延迟（consumer lag）
+- 自动扩容策略：
+    - 分区可动态扩容；
+    - 支持 Broker 动态加入。
+
+#### 八、性能实测基准（经验数据）
+
+| 环境                        | 配置             | 吞吐量（TPS） |
+|---------------------------|----------------|----------|
+| 3 台 Broker（64C256G, NVMe） | 3 主题 × 30 分区   | ~300k    |
+| 6 台 Broker                | 6 主题 × 60 分区   | ~650k    |
+| 10 台 Broker               | 10 主题 × 100 分区 | \>1M     |
+
+> 注意：实际性能取决于消息大小、ack 模式、磁盘和网络性能。
 
 ### 如何保证消息跨数据中心同步的一致性？
 

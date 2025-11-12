@@ -315,7 +315,7 @@ Apache RocketMQ 的总体架构主要由以下几个核心组件构成，每个�
     - 职责：协调 Broker 的主从切换，实现自动故障转移。
     - 特点：类似 ZooKeeper 的协调功能，但更轻量、与 RocketMQ 紧密集成。
 
-🔄 架构工作流程简述
+架构工作流程简述：
 
 1. Broker 启动 → 向 NameServer 注册。
 2. Producer 启动 → 从 NameServer 获取 Broker 路由信息。

@@ -59,6 +59,9 @@ func highest(heights []int) int {
 
 ```python
 def trap(height):
+    if not height:
+        return 0
+
     mid = height.index(max(height))
     left, right = 0, len(height) - 1
     count = 0
@@ -95,19 +98,3 @@ def trap(height):
 - 无锁链表
 - LRU
 - LFU
-
-## RSA
-
-✅ 核心理念：“用私钥签名，用公钥验证”
-
-🔁 与加密通信相反（加密是“公钥加密，私钥解密”）
-
-
-
-如果“签名”用公钥签名、用私钥验证：
-
-那么所有人都能伪造签名（因为公钥是公开的），失去意义。
-
-如果“加密”用私钥加密、公钥解密：
-
-那么任何人都能解密（因为公钥公开），也就不再保密。

@@ -111,35 +111,40 @@
 | 支付扣减 | 用户扫码支付成功后才扣库存   | 绝对不会出现由于不支付导致的库存锁定，库存利用率最高。      | 超卖风险极大：用户下单时还有货，支付完发现货没了。极度伤害用户体验。   | 内部福利发放、库存极大的普通商品。    |
 | 预扣库存 | 下单预留，过期释放       | 兼顾两者优点。下单后锁定库存 $N$ 分钟，支付成功则真正核销。 | 实现复杂度较高，需要处理分布式事务和定时任务。              | 主流电商平台（如淘宝、京东）的通用方案。 |
 
-- 扣减库存成功，生成订单失败，此时可以发送一条MQ消息，尝试将库存加回去，并且通过日志记录加库存的原因。
-- 扣减库存成功，发生宕机，此时我们可以得知发生宕机的时间段，然后通过定时任务，对比库存扣减和订单的情况，判断是否需要将库存修正回去。
-- SKU增加`锁定库存`和`可用库存`字段可以在扣减库存事务异常时，为补偿数据作参考字段。
-
 ```sql
 create table sku
 (
-    id              bigint primary key not null,
-    name            varchar(100)       not null,
-    total_stock     int unsigned       not null default 0 comment '总库存',
-    locked_stock    int unsigned       not null default 0 comment '锁定库存'
+    id           bigint primary key not null,
+    name         varchar(100)       not null,
+    total_stock  int unsigned       not null default 0 comment '总库存',
+    locked_stock int unsigned       not null default 0 comment '锁定库存'
 );
 
 -- 下单锁定库存
 UPDATE sku
 SET locked_stock = locked_stock + ?
-WHERE id = ? AND total_stock >= locked_stock + ?;
+WHERE id = ?
+  AND total_stock >= locked_stock + ?;
 
 -- 支付成功确认出库
 UPDATE sku
 SET locked_stock = locked_stock - ?,
-    total_stock = total_stock - ?
-WHERE id = ?;
+    total_stock  = total_stock - ?
+WHERE id = ?
+  AND locked_stock >= ?;
 
 -- 订单取消释放库存
 UPDATE sku
 SET locked_stock = locked_stock - ?
-WHERE id = ? AND locked_stock >= ?;
+WHERE id = ?
+  AND locked_stock >= ?;
 ```
+
+### 预扣减库存成功，生成订单失败/宕机
+
+业务并未实际发生，保证库存一致即可。
+
+预扣减库存前，生成订单号，发送一条MQ异步写入一条预扣减日志绑定对应订单号，通过分析库存扣减量可以判断是否出现库存预扣减成功，但是未生成订单的情况。
 
 ## 支付 Payment
 
@@ -384,7 +389,7 @@ RBAC 通常应用于组织、部门、群组、角色、岗位等不同授权方
 
 #### 组件
 
-- 权限 Permission = 资源 Resource + 操作 Action
+- 权限 authority = 资源 resource + 操作 action
     - 功能权限
         - 页面权限/菜单权限
         - 按钮权限
@@ -392,10 +397,10 @@ RBAC 通常应用于组织、部门、群组、角色、岗位等不同授权方
     - 数据权限
         - 行级权限
         - 字段权限
-- 授权 Authorization
-- 角色 Role
-- 权限包（拓展）Package
-- 职位（拓展）Job
+- 授权 permission
+- 角色 role
+- 权限包（拓展）package
+- 职位（拓展）position
 
 分配机制：
 
@@ -411,7 +416,7 @@ RBAC 通常应用于组织、部门、群组、角色、岗位等不同授权方
             - 权限
                 - 资源：发票
                 - 操作：新建
-        - 角色：全面预算填报员
+        - 角色：预算填报员
             - 权限
                 - 资源：预算填报
                 - 操作：新建
